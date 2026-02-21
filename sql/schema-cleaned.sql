@@ -726,7 +726,11 @@ CREATE TABLE public.drive_model (
     manufacturer_id smallint,
     model_name text NOT NULL,
     normalized_name text GENERATED ALWAYS AS (public.normalize_identifier_text(model_name)) STORED,
-    nominal_capacity_bytes bigint
+    nominal_capacity_bytes bigint,
+    media_type text DEFAULT 'unknown'::text NOT NULL,
+    interface_type text,
+    form_factor text,
+    rpm integer
 );
 
 
@@ -890,6 +894,7 @@ ALTER TABLE public.provider ALTER COLUMN provider_id SET DEFAULT nextval('public
 -- SEED DATA
 -- Minimal reference rows only.
 -- Optional model catalog lives in sql/seed-drive-model.sql.
+-- Optional model/manufacturer enrichment lives in sql/seed-drive-model-enrichment.sql.
 --
 
 -- Optional: seed drive models from sql/seed-drive-model.sql
@@ -916,6 +921,8 @@ ALTER TABLE public.drive_day
 
 ALTER TABLE public.drive_model
     ADD CONSTRAINT drive_model_model_name_key UNIQUE (model_name);
+ALTER TABLE public.drive_model
+    ADD CONSTRAINT drive_model_media_type_check CHECK ((media_type = ANY (ARRAY['unknown'::text, 'hdd'::text, 'ssd'::text])));
 ALTER TABLE public.drive_model
     ADD CONSTRAINT drive_model_pkey PRIMARY KEY (model_id);
 
@@ -962,6 +969,7 @@ CREATE INDEX drive_lifecycle_model_name_idx ON public.drive_lifecycle USING btre
 CREATE INDEX drive_model_capacity_idx ON public.drive_model USING btree (nominal_capacity_bytes);
 CREATE INDEX drive_model_mfr_capacity_idx ON public.drive_model USING btree (manufacturer_id, nominal_capacity_bytes);
 CREATE INDEX drive_model_normalized_name_idx ON public.drive_model USING btree (normalized_name);
+CREATE INDEX drive_model_media_type_idx ON public.drive_model USING btree (media_type);
 
 CREATE INDEX model_alias_model_id_idx ON public.model_alias USING btree (model_id);
 CREATE INDEX model_alias_normalized_name_idx ON public.model_alias USING btree (provider_id, normalized_name) WHERE (is_active IS TRUE);
@@ -1047,6 +1055,14 @@ COMMENT ON COLUMN public.drive_day.smart_all IS
   'Sparse JSONB payload of additional SMART metrics not promoted to dedicated columns.';
 COMMENT ON COLUMN public.drive_model.normalized_name IS
   'Generated normalization key for model_name used for loose matching and dedup workflows.';
+COMMENT ON COLUMN public.drive_model.media_type IS
+  'Coarse media classification: ssd, hdd, or unknown.';
+COMMENT ON COLUMN public.drive_model.interface_type IS
+  'Optional interface classification (for example: sata, sas, nvme).';
+COMMENT ON COLUMN public.drive_model.form_factor IS
+  'Optional physical form factor (for example: 2.5in, 3.5in, m.2).';
+COMMENT ON COLUMN public.drive_model.rpm IS
+  'Optional nominal spindle speed for HDD models.';
 COMMENT ON COLUMN public.model_alias.raw_model_name IS
   'As-imported model string from provider data.';
 COMMENT ON COLUMN public.model_alias.normalized_name IS

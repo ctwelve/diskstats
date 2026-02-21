@@ -15,8 +15,20 @@ Skip optional model seed data:
 bin/db_setup --no-model-seed
 ```
 
+Skip optional model enrichment data:
+
+```bash
+bin/db_setup --no-model-enrichment
+```
+
 Use a specific admin DSN for `psql` (defaults to `postgresql:///postgres`):
 
 ```bash
 bin/db_setup "postgresql://user:pass@localhost:5432/postgres"
+```
+
+Reset/rebuild quickly (wraps `db_setup`):
+
+```bash
+bin/db_reset
 ```

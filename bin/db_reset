@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<'USAGE'
+Usage: db_reset [db_setup args...]
+
+Examples:
+  db_reset
+  db_reset --no-model-seed
+  db_reset --no-model-enrichment "postgresql://user:pass@localhost:5432/postgres"
+
+Notes:
+  - This is a convenience wrapper around bin/db_setup.
+  - The reset behavior comes from sql/schema-cleaned.sql (DROP DATABASE IF EXISTS diskstats).
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+echo "==> Resetting diskstats database via db_setup..."
+"${SCRIPT_DIR}/db_setup" "$@"
