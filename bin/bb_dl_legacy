@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_URL="https://f001.backblazeb2.com/file/Backblaze-Hard-Drive-Data"
+
+# Where everything lives (NFS mount in your Fedora VM)
+ROOT="${HOME}/Projects/backblaze"
+ZIPS="${ROOT}/zips"
+EXTRACTED="${ROOT}/extracted"
+LOGS="${ROOT}/logs"
+
+mkdir -p "$ZIPS" "$EXTRACTED" "$LOGS"
+
+: "${BB_DSN:?Set BB_DSN in environment, e.g. export BB_DSN='postgresql://.../diskstats'}"
+
+# prevent concurrent runs (legacy + quarterly colliding, etc.)
+exec 9>"${ROOT}/state_legacy.lock"
+flock -n 9 || { echo "bb_dl_legacy: already running"; exit 0; }
+
+# log everything
+LOGFILE="${LOGS}/legacy_pipeline_$(date -u +%Y%m%dT%H%M%SZ).log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "==> Backblaze LEGACY pipeline starting at $(date -u)"
+echo "==> ROOT=$ROOT"
+echo "==> Log: $LOGFILE"
+
+LEGACY_ZIPS=(
+  "data_2013.zip"
+  "data_2014.zip"
+  "data_2015.zip"
+)
+
+for ZIP_NAME in "${LEGACY_ZIPS[@]}"; do
+  ZIP_PATH="${ZIPS}/${ZIP_NAME}"
+
+  # We'll extract into extracted/data_2013, extracted/data_2014, etc.
+  # (strip ".zip")
+  BASE_NAME="${ZIP_NAME%.zip}"
+  TARGET_DIR="${EXTRACTED}/${BASE_NAME}"
+  TMP_DIR="${TARGET_DIR}.tmp"
+
+  echo
+  echo "==> ${ZIP_NAME}"
+
+  # download if missing
+  if [[ ! -f "$ZIP_PATH" ]]; then
+    echo "    downloading -> $ZIP_PATH"
+    wget --continue -O "$ZIP_PATH" "${BASE_URL}/${ZIP_NAME}"
+  else
+    echo "    zip present"
+  fi
+
+  # sanitize zip (don't fail if pattern not present)
+  echo "    sanitizing zip (__MACOSX/*)"
+  zip -d "$ZIP_PATH" "__MACOSX/*" >/dev/null 2>&1 || true
+
+  # extract if needed
+  if [[ -d "$TARGET_DIR" ]]; then
+    echo "    already extracted -> $TARGET_DIR"
+  else
+    echo "    extracting -> $TARGET_DIR"
+    rm -rf "$TMP_DIR"
+    mkdir -p "$TMP_DIR"
+    unzip -q "$ZIP_PATH" -d "$TMP_DIR"
+
+    # sanity check: ensure directory contains CSVs somewhere
+    if ! find "$TMP_DIR" -name '*.csv' | grep -q .; then
+      echo "    ERROR: no CSVs found after unzip: $ZIP_PATH"
+      rm -rf "$TMP_DIR"
+      exit 1
+    fi
+
+    mv "$TMP_DIR" "$TARGET_DIR"
+    echo "    extracted"
+  fi
+
+  # ingest (bb_load is resumable per-file via ingest_log)
+  echo "    ingesting -> Postgres"
+  bb_load.py "$BB_DSN" "$TARGET_DIR"
+
+  echo "    done"
+done
+
+echo
+echo "==> Backblaze LEGACY pipeline finished at $(date -u)"
+echo "==> Log: $LOGFILE"

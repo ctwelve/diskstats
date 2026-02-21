@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE_URL="https://f001.backblazeb2.com/file/Backblaze-Hard-Drive-Data"
+START_YEAR=2016
+END_YEAR=2025
+
+ROOT="${HOME}/Projects/backblaze"
+ZIPS="${ROOT}/zips"
+EXTRACTED="${ROOT}/extracted"
+LOGS="${ROOT}/logs"
+
+mkdir -p "$ZIPS" "$EXTRACTED" "$LOGS"
+
+: "${BB_DSN:?Set BB_DSN in environment, e.g. export BB_DSN='postgresql://.../diskstats'}"
+
+# prevent accidental concurrent runs
+exec 9>"${ROOT}/state.lock"
+flock -n 9 || { echo "bb_dl: already running"; exit 0; }
+
+# log everything
+LOGFILE="${LOGS}/pipeline_$(date -u +%Y%m%dT%H%M%SZ).log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "==> Backblaze pipeline starting at $(date -u)"
+echo "==> ROOT=$ROOT"
+echo "==> Years ${START_YEAR}..${END_YEAR}"
+
+for year in $(seq "$START_YEAR" "$END_YEAR"); do
+  for quarter in 1 2 3 4; do
+    ZIP_NAME="data_Q${quarter}_${year}.zip"
+    ZIP_PATH="${ZIPS}/${ZIP_NAME}"
+
+    TARGET_DIR="${EXTRACTED}/data_Q${quarter}_${year}"
+    TMP_DIR="${TARGET_DIR}.tmp"
+
+    echo
+    echo "==> ${ZIP_NAME}"
+
+    # download if missing
+    if [[ ! -f "$ZIP_PATH" ]]; then
+      echo "    downloading -> $ZIP_PATH"
+      wget --continue -O "$ZIP_PATH" "${BASE_URL}/${ZIP_NAME}"
+    else
+      echo "    zip present"
+    fi
+
+    # sanitize zip (don't fail if pattern not present)
+    echo "    sanitizing zip (__MACOSX/*)"
+    zip -d "$ZIP_PATH" "__MACOSX/*" >/dev/null 2>&1 || true
+
+    # extract if needed
+    if [[ -d "$TARGET_DIR" ]]; then
+      echo "    already extracted -> $TARGET_DIR"
+    else
+      echo "    extracting -> $TARGET_DIR"
+      rm -rf "$TMP_DIR"
+      mkdir -p "$TMP_DIR"
+      unzip -q "$ZIP_PATH" -d "$TMP_DIR"
+
+      # sanity check
+      if ! find "$TMP_DIR" -name '*.csv' | grep -q .; then
+        echo "    ERROR: no CSVs found after unzip: $ZIP_PATH"
+        rm -rf "$TMP_DIR"
+        exit 1
+      fi
+
+      mv "$TMP_DIR" "$TARGET_DIR"
+      echo "    extracted"
+    fi
+
+    # ingest (bb_load is resumable; safe to re-run)
+    echo "    ingesting -> Postgres"
+    bb_load.py "$BB_DSN" "$TARGET_DIR"
+
+    echo "    done"
+  done
+done
+
+echo
+echo "==> Backblaze pipeline finished at $(date -u)"
+echo "==> Log: $LOGFILE"
