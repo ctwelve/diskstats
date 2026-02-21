@@ -313,12 +313,6 @@ BEGIN
       SELECT m2.model_id, 2 AS priority
       FROM public.drive_model m2
       WHERE m2.model_name = r.model
-
-      UNION ALL
-
-      SELECT m3.model_id, 3 AS priority
-      FROM public.drive_model m3
-      WHERE m3.normalized_name = public.normalize_identifier_text(r.model)
     ) AS candidate
     ORDER BY candidate.priority, candidate.model_id
     LIMIT 1
@@ -725,7 +719,7 @@ CREATE TABLE public.drive_model (
     model_id bigint NOT NULL,
     manufacturer_id smallint,
     model_name text NOT NULL,
-    normalized_name text GENERATED ALWAYS AS (public.normalize_identifier_text(model_name)) STORED,
+    normalized_name text,
     nominal_capacity_bytes bigint,
     media_type text DEFAULT 'unknown'::text NOT NULL,
     interface_type text,
@@ -1054,7 +1048,7 @@ COMMENT ON COLUMN public.drive_day.flags IS
 COMMENT ON COLUMN public.drive_day.smart_all IS
   'Sparse JSONB payload of additional SMART metrics not promoted to dedicated columns.';
 COMMENT ON COLUMN public.drive_model.normalized_name IS
-  'Generated normalization key for model_name used for loose matching and dedup workflows.';
+  'Curated canonical model token/name (for example, MQ01ABF050), maintained by enrichment seeds.';
 COMMENT ON COLUMN public.drive_model.media_type IS
   'Coarse media classification: ssd, hdd, or unknown.';
 COMMENT ON COLUMN public.drive_model.interface_type IS

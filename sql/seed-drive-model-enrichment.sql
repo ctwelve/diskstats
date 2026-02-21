@@ -36,6 +36,28 @@ SET manufacturer_id = CASE
   ELSE COALESCE(manufacturer_id, 1)
 END;
 
+-- Curated canonical model token/name.
+UPDATE public.drive_model
+SET normalized_name = btrim(
+  regexp_replace(
+    CASE
+      WHEN model_name IN ('WD Blue SA510 2.5 250GB') THEN 'SA510'
+      WHEN model_name IN ('HP SSD S700 250GB') THEN 'S700'
+      WHEN model_name IN ('DELLBOSS VD') THEN 'BOSS VD'
+      WHEN model_name ~* '^Samsung\\s+SSD\\s+' THEN regexp_replace(model_name, '^Samsung\\s+SSD\\s+', '', 'i')
+      WHEN model_name ~* '^Seagate\\s+' THEN regexp_replace(model_name, '^Seagate\\s+', '', 'i')
+      WHEN model_name ~* '^TOSHIBA\\s+' THEN regexp_replace(model_name, '^TOSHIBA\\s+', '', 'i')
+      WHEN model_name ~* '^WDC\\s+' THEN regexp_replace(model_name, '^WDC\\s+', '', 'i')
+      WHEN model_name ~* '^HGST\\s+' THEN regexp_replace(model_name, '^HGST\\s+', '', 'i')
+      WHEN model_name ~* '^Hitachi\\s+' THEN regexp_replace(model_name, '^Hitachi\\s+', '', 'i')
+      ELSE model_name
+    END,
+    '\\s+',
+    ' ',
+    'g'
+  )
+);
+
 -- Coarse media classification.
 UPDATE public.drive_model
 SET media_type = CASE
