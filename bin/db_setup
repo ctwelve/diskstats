@@ -4,18 +4,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 SCHEMA_SQL="${ROOT_DIR}/sql/schema-cleaned.sql"
-MODEL_SEED_SQL="${ROOT_DIR}/sql/seed-drive-model.sql"
-MODEL_ENRICH_SQL="${ROOT_DIR}/sql/seed-drive-model-enrichment.sql"
+MANUFACTURER_SEED_SQL="${ROOT_DIR}/sql/seed-manufacturer.sql"
+MODEL_CURATED_SEED_SQL="${ROOT_DIR}/sql/seed-drive-model-curated.sql"
+MODEL_ALIAS_SEED_SQL="${ROOT_DIR}/sql/seed-model-alias.sql"
 
 usage() {
   cat <<'USAGE'
-Usage: db_setup [--no-model-seed] [--no-model-enrichment] [PSQL_DSN]
+Usage: db_setup [--no-model-seed] [--no-model-alias] [PSQL_DSN]
 
 Examples:
   db_setup
   db_setup "postgresql://localhost/postgres"
   db_setup --no-model-seed "postgresql://user:pass@localhost:5432/postgres"
-  db_setup --no-model-seed --no-model-enrichment
+  db_setup --no-model-seed --no-model-alias
 
 Notes:
   - Uses psql and runs with ON_ERROR_STOP=1.
@@ -25,7 +26,7 @@ USAGE
 }
 
 seed_models=1
-enrich_models=1
+seed_model_alias=1
 dsn="postgresql:///postgres"
 
 while [[ $# -gt 0 ]]; do
@@ -34,8 +35,8 @@ while [[ $# -gt 0 ]]; do
       seed_models=0
       shift
       ;;
-    --no-model-enrichment)
-      enrich_models=0
+    --no-model-alias)
+      seed_model_alias=0
       shift
       ;;
     -h|--help)
@@ -58,17 +59,22 @@ echo "==> Running schema: ${SCHEMA_SQL}"
 psql "${dsn}" -v ON_ERROR_STOP=1 -f "${SCHEMA_SQL}"
 
 if [[ "${seed_models}" -eq 1 ]]; then
-  echo "==> Running optional model seed: ${MODEL_SEED_SQL}"
-  psql "${dsn}" -v ON_ERROR_STOP=1 -f "${MODEL_SEED_SQL}"
+  echo "==> Running manufacturer seed: ${MANUFACTURER_SEED_SQL}"
+  psql "${dsn}" -v ON_ERROR_STOP=1 -f "${MANUFACTURER_SEED_SQL}"
+
+  echo "==> Running curated drive_model seed: ${MODEL_CURATED_SEED_SQL}"
+  psql "${dsn}" -v ON_ERROR_STOP=1 -f "${MODEL_CURATED_SEED_SQL}"
 else
   echo "==> Skipping model seed (--no-model-seed)"
 fi
 
-if [[ "${enrich_models}" -eq 1 ]]; then
-  echo "==> Running optional model enrichment: ${MODEL_ENRICH_SQL}"
-  psql "${dsn}" -v ON_ERROR_STOP=1 -f "${MODEL_ENRICH_SQL}"
+if [[ "${seed_models}" -eq 1 && "${seed_model_alias}" -eq 1 ]]; then
+  echo "==> Running exact model alias seed: ${MODEL_ALIAS_SEED_SQL}"
+  psql "${dsn}" -v ON_ERROR_STOP=1 -f "${MODEL_ALIAS_SEED_SQL}"
+elif [[ "${seed_models}" -eq 0 ]]; then
+  echo "==> Skipping model alias seed (model seed disabled)"
 else
-  echo "==> Skipping model enrichment (--no-model-enrichment)"
+  echo "==> Skipping model alias seed (--no-model-alias)"
 fi
 
 echo "==> Database setup complete."

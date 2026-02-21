@@ -45,6 +45,38 @@ CREATE FUNCTION public.normalize_identifier_text(p_input text) RETURNS text
       SELECT NULLIF(regexp_replace(lower(btrim(p_input)), '[^a-z0-9]+', '', 'g'), '');
     $$;
 
+CREATE FUNCTION bb.infer_manufacturer_id_from_model_name(p_model_name text) RETURNS smallint
+    LANGUAGE sql
+    IMMUTABLE
+    RETURNS NULL ON NULL INPUT
+    AS $$
+      SELECT CASE
+        WHEN btrim(p_model_name) ~* '^(WDC|WD|WUH|WDS)' THEN 2
+        WHEN btrim(p_model_name) ~* '^(HGST|Hitachi)' THEN 3
+        WHEN btrim(p_model_name) ~* '^(ST|Seagate)' THEN 4
+        WHEN btrim(p_model_name) ~* '^TOSHIBA' THEN 5
+        WHEN btrim(p_model_name) ~* '^(SAMSUNG|Samsung)' THEN 6
+        WHEN btrim(p_model_name) ~* '^(Micron|MTF)' THEN 7
+        WHEN btrim(p_model_name) ~* '^(CT[0-9]|Crucial)' THEN 8
+        WHEN btrim(p_model_name) ~* '^SSDSCK' THEN 9
+        WHEN btrim(p_model_name) ~* '^HP ' THEN 10
+        WHEN btrim(p_model_name) ~* '^DELL' THEN 11
+        ELSE 1
+      END::smallint;
+    $$;
+
+CREATE FUNCTION bb.infer_media_type_from_model_name(p_model_name text) RETURNS text
+    LANGUAGE sql
+    IMMUTABLE
+    RETURNS NULL ON NULL INPUT
+    AS $$
+      SELECT CASE
+        WHEN btrim(p_model_name) ~* '(SSD|SSDSCK|MTF|DELLBOSS|\\bCT[0-9])' THEN 'ssd'
+        WHEN btrim(p_model_name) ~* '^(ST|WDC|WD|WUH|HGST|Hitachi|TOSHIBA|SAMSUNG HD)' THEN 'hdd'
+        ELSE 'unknown'
+      END;
+    $$;
+
 
 --
 -- STORED PROCEDURES
@@ -241,6 +273,9 @@ BEGIN
   SET LOCAL synchronous_commit = off;
   SET LOCAL work_mem = '256MB';
 
+  -- Ensure new raw model strings are materialized/mapped before fact insert.
+  CALL bb.ensure_backblaze_models_for_range(p_from, p_to);
+
   WITH p AS (
     SELECT provider_id FROM public.provider WHERE name='backblaze'
   )
@@ -326,6 +361,104 @@ BEGIN
   ON CONFLICT (provider_id, drive_id, date) DO NOTHING;
 
   GET DIAGNOSTICS rows_inserted = ROW_COUNT;
+END $$;
+
+CREATE PROCEDURE bb.ensure_backblaze_models_for_range(IN p_from date, IN p_to date)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_provider_id smallint;
+BEGIN
+  SELECT provider_id INTO v_provider_id
+  FROM public.provider
+  WHERE name = 'backblaze';
+
+  IF v_provider_id IS NULL THEN
+    RAISE EXCEPTION 'Provider backblaze not found in public.provider';
+  END IF;
+
+  WITH raw_models AS (
+    SELECT
+      btrim(r.model) AS raw_model_name,
+      max(r.capacity_bytes) AS max_capacity_bytes
+    FROM bb.drive_stats_raw r
+    WHERE r.date >= p_from
+      AND r.date < p_to
+      AND r.model IS NOT NULL
+      AND btrim(r.model) <> ''
+    GROUP BY btrim(r.model)
+  )
+  INSERT INTO public.drive_model (
+    model_name,
+    normalized_name,
+    manufacturer_id,
+    nominal_capacity_bytes,
+    media_type
+  )
+  SELECT
+    rm.raw_model_name,
+    rm.raw_model_name,
+    bb.infer_manufacturer_id_from_model_name(rm.raw_model_name),
+    rm.max_capacity_bytes,
+    bb.infer_media_type_from_model_name(rm.raw_model_name)
+  FROM raw_models rm
+  LEFT JOIN public.drive_model dm ON dm.model_name = rm.raw_model_name
+  WHERE dm.model_id IS NULL;
+
+  INSERT INTO public.model_alias (provider_id, raw_model_name, model_id, match_method, notes)
+  SELECT
+    v_provider_id,
+    rm.raw_model_name,
+    dm.model_id,
+    'auto_raw',
+    'Auto-created during load from raw model_name'
+  FROM (
+    SELECT DISTINCT btrim(r.model) AS raw_model_name
+    FROM bb.drive_stats_raw r
+    WHERE r.date >= p_from
+      AND r.date < p_to
+      AND r.model IS NOT NULL
+      AND btrim(r.model) <> ''
+  ) rm
+  JOIN public.drive_model dm ON dm.model_name = rm.raw_model_name
+  ON CONFLICT (provider_id, raw_model_name) DO NOTHING;
+END $$;
+
+
+CREATE PROCEDURE bb.infer_backblaze_model_aliases(IN p_match_method text DEFAULT 'auto_norm', IN p_notes text DEFAULT 'Inferred by normalized raw model token')
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_provider_id smallint;
+BEGIN
+  SELECT provider_id INTO v_provider_id
+  FROM public.provider
+  WHERE name = 'backblaze';
+
+  IF v_provider_id IS NULL THEN
+    RAISE EXCEPTION 'Provider backblaze not found in public.provider';
+  END IF;
+
+  INSERT INTO public.model_alias (provider_id, raw_model_name, model_id, match_method, notes)
+  SELECT
+    v_provider_id,
+    r.model,
+    dm.model_id,
+    p_match_method,
+    p_notes
+  FROM (
+    SELECT DISTINCT btrim(model) AS model
+    FROM bb.drive_stats_raw
+    WHERE model IS NOT NULL
+      AND btrim(model) <> ''
+  ) r
+  JOIN public.drive_model dm
+    ON public.normalize_identifier_text(r.model) = public.normalize_identifier_text(dm.normalized_name)
+  LEFT JOIN public.model_alias ma
+    ON ma.provider_id = v_provider_id
+   AND ma.raw_model_name = r.model
+  WHERE ma.alias_id IS NULL
+  ON CONFLICT (provider_id, raw_model_name) DO NOTHING;
 END $$;
 
 --
@@ -886,12 +1019,12 @@ ALTER TABLE public.provider ALTER COLUMN provider_id SET DEFAULT nextval('public
 
 --
 -- SEED DATA
--- Minimal reference rows only.
--- Optional model catalog lives in sql/seed-drive-model.sql.
--- Optional model/manufacturer enrichment lives in sql/seed-drive-model-enrichment.sql.
+-- Minimal bootstrap rows only.
+-- Curated seed data is maintained in:
+--   - sql/seed-manufacturer.sql
+--   - sql/seed-drive-model-curated.sql
+--   - sql/seed-model-alias.sql
 --
-
--- Optional: seed drive models from sql/seed-drive-model.sql
 
 INSERT INTO public.manufacturer (manufacturer_id, name) VALUES (1, 'Unknown');
 INSERT INTO public.provider (provider_id, name) VALUES (1, 'backblaze');
@@ -1012,7 +1145,15 @@ COMMENT ON PROCEDURE bb.load_drive_day_backfill(integer, integer, boolean) IS
 COMMENT ON PROCEDURE bb.load_drive_day_quarter(date, date) IS
   'Wrapper that runs one quarter load and reports success/error without aborting caller control flow.';
 COMMENT ON PROCEDURE bb.load_drive_day_range(date, date) IS
-  'Loads one date range from raw rows into public.drive_day and returns inserted row count, resolving model via alias/canonical normalization.';
+  'Loads one date range from raw rows into public.drive_day; first infers missing models/aliases, then inserts normalized fact rows.';
+COMMENT ON PROCEDURE bb.ensure_backblaze_models_for_range(date, date) IS
+  'Infers missing canonical models and exact aliases from raw Backblaze model strings for a date window.';
+COMMENT ON PROCEDURE bb.infer_backblaze_model_aliases(text, text) IS
+  'Optional heuristic inference: builds missing alias mappings by comparing normalized raw model strings to curated normalized_name.';
+COMMENT ON FUNCTION bb.infer_manufacturer_id_from_model_name(text) IS
+  'Heuristic manufacturer classifier for a raw model string. Returns public.manufacturer.manufacturer_id.';
+COMMENT ON FUNCTION bb.infer_media_type_from_model_name(text) IS
+  'Heuristic media classifier for a raw model string (hdd, ssd, unknown).';
 
 COMMENT ON TABLE bb.drive_stats_raw IS
   'Raw Backblaze daily snapshots exactly as ingested (wide SMART schema, partitioned by date).';
@@ -1048,7 +1189,7 @@ COMMENT ON COLUMN public.drive_day.flags IS
 COMMENT ON COLUMN public.drive_day.smart_all IS
   'Sparse JSONB payload of additional SMART metrics not promoted to dedicated columns.';
 COMMENT ON COLUMN public.drive_model.normalized_name IS
-  'Curated canonical model token/name (for example, MQ01ABF050), maintained by enrichment seeds.';
+  'Curated canonical model token/name (for example, MQ01ABF050), maintained by curated seed data.';
 COMMENT ON COLUMN public.drive_model.media_type IS
   'Coarse media classification: ssd, hdd, or unknown.';
 COMMENT ON COLUMN public.drive_model.interface_type IS

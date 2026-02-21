@@ -1,0 +1,21 @@
+# SQL Layout
+
+- `schema-cleaned.sql`: canonical schema/bootstrap script (creates DB, switches context, defines all objects).
+- `schema-master.sql`: raw `pg_dump` artifact.
+- `drive_model_curated.sql`: source dump of the hand-curated `public.drive_model` table.
+- `seed-manufacturer.sql`: curated manufacturer rows.
+- `seed-drive-model-curated.sql`: curated `public.drive_model` seed data derived from `drive_model_curated.sql`.
+- `seed-model-alias.sql`: deterministic exact Backblaze aliases (`raw model_name -> model_id`).
+
+## Optional inference procedures
+
+- `CALL bb.ensure_backblaze_models_for_range(<from>, <to>);`
+  - Adds missing `drive_model` rows and exact aliases from raw rows in a date window using heuristic manufacturer/media inference.
+- `CALL bb.infer_backblaze_model_aliases();`
+  - Adds missing aliases by normalized-string matching against curated `drive_model.normalized_name`.
+
+## Preferred seed order
+
+1. `seed-manufacturer.sql`
+2. `seed-drive-model-curated.sql`
+3. `seed-model-alias.sql`
