@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${PWD}"
+start_year=2013
+end_year="$(( $(date -u +%Y) + 1 ))"
+dsn="${PSQL_DSN:-}"
+allow_non_diskstats=0
+
+usage() {
+  cat <<'USAGE'
+Usage: db_preflight [--dsn DSN] [--start-year YYYY] [--end-year YYYY] [--allow-non-diskstats]
+
+Purpose:
+  Fast readiness check before long-running ingest/normalization jobs.
+
+Checks:
+  - Required local tools are available
+  - Python can import psycopg2
+  - Database connection works
+  - Required schemas/tables/procedures exist
+  - Quarterly partition coverage exists for requested year range
+
+Examples:
+  db_preflight
+  db_preflight --start-year 2013 --end-year 2026
+  db_preflight --dsn "postgresql://user:pass@localhost:5432/diskstats"
+
+Notes:
+  - Uses PSQL_DSN from env or .env unless --dsn is provided.
+  - Expects current database to be diskstats by default.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dsn)
+      dsn="${2:?missing value for --dsn}"
+      shift 2
+      ;;
+    --start-year)
+      start_year="${2:?missing value for --start-year}"
+      shift 2
+      ;;
+    --end-year)
+      end_year="${2:?missing value for --end-year}"
+      shift 2
+      ;;
+    --allow-non-diskstats)
+      allow_non_diskstats=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "${dsn}" && -f "${ROOT}/.env" ]]; then
+  dsn="$(
+    awk '/^[[:space:]]*PSQL_DSN[[:space:]]*=/ {
+      sub(/^[[:space:]]*PSQL_DSN[[:space:]]*=[[:space:]]*/, "", $0);
+      print; exit
+    }' "${ROOT}/.env"
+  )"
+  dsn="${dsn%\"}"
+  dsn="${dsn#\"}"
+  dsn="${dsn%\'}"
+  dsn="${dsn#\'}"
+fi
+
+if ! [[ "${start_year}" =~ ^[0-9]{4}$ && "${end_year}" =~ ^[0-9]{4}$ ]]; then
+  echo "ERROR: start/end year must be 4-digit integers." >&2
+  exit 1
+fi
+
+if (( start_year > end_year )); then
+  echo "ERROR: --start-year cannot be greater than --end-year." >&2
+  exit 1
+fi
+
+errors=0
+warnings=0
+
+ok() {
+  echo "[OK]   $*"
+}
+
+warn() {
+  echo "[WARN] $*"
+  warnings=$((warnings + 1))
+}
+
+fail() {
+  echo "[FAIL] $*"
+  errors=$((errors + 1))
+}
+
+need_cmd() {
+  local cmd="$1"
+  if command -v "${cmd}" >/dev/null 2>&1; then
+    ok "command available: ${cmd}"
+  else
+    fail "missing command in PATH: ${cmd}"
+  fi
+}
+
+psql_q() {
+  local q="$1"
+  psql "${dsn}" -v ON_ERROR_STOP=1 -Atqc "${q}"
+}
+
+echo "==> diskstats preflight"
+echo "==> years: ${start_year}..${end_year}"
+
+need_cmd psql
+need_cmd python3
+need_cmd wget
+need_cmd zip
+need_cmd unzip
+need_cmd flock
+
+if python3 -c 'import psycopg2' >/dev/null 2>&1; then
+  ok "python module import: psycopg2"
+else
+  fail "python module missing: psycopg2"
+fi
+
+if [[ -z "${dsn}" ]]; then
+  fail "PSQL_DSN is not set (env/.env/--dsn)"
+fi
+
+if (( errors > 0 )); then
+  echo
+  echo "Preflight failed early: ${errors} error(s), ${warnings} warning(s)."
+  exit 1
+fi
+
+if db_name="$(psql_q "SELECT current_database();" 2>/dev/null)"; then
+  ok "database connection established"
+else
+  fail "cannot connect to database with provided DSN"
+  echo
+  echo "Preflight failed: ${errors} error(s), ${warnings} warning(s)."
+  exit 1
+fi
+
+if [[ "${db_name}" == "diskstats" ]]; then
+  ok "connected database is diskstats"
+else
+  if (( allow_non_diskstats == 1 )); then
+    warn "connected database is '${db_name}' (not diskstats); schema checks may fail"
+  else
+    fail "connected database is '${db_name}', expected 'diskstats' for ingest/normalization"
+  fi
+fi
+
+check_regclass() {
+  local obj="$1"
+  local val
+  val="$(psql_q "SELECT to_regclass('${obj}') IS NOT NULL;")"
+  if [[ "${val}" == "t" ]]; then
+    ok "object exists: ${obj}"
+  else
+    fail "missing object: ${obj}"
+  fi
+}
+
+check_partitioned() {
+  local schema="$1"
+  local rel="$2"
+  local kind
+  kind="$(psql_q "SELECT c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='${schema}' AND c.relname='${rel}';")"
+  if [[ "${kind}" == "p" ]]; then
+    ok "partitioned table: ${schema}.${rel}"
+  elif [[ -n "${kind}" ]]; then
+    fail "table is not partitioned: ${schema}.${rel}"
+  else
+    fail "missing table: ${schema}.${rel}"
+  fi
+}
+
+check_regprocedure() {
+  local sig="$1"
+  local val
+  val="$(psql_q "SELECT to_regprocedure('${sig}') IS NOT NULL;")"
+  if [[ "${val}" == "t" ]]; then
+    ok "procedure exists: ${sig}"
+  else
+    fail "missing procedure: ${sig}"
+  fi
+}
+
+check_partition_coverage() {
+  local parent_prefix="$1"
+  local label="$2"
+  local out count sample
+  out="$(psql_q "
+WITH expected AS (
+  SELECT y AS year, q AS quarter
+  FROM generate_series(${start_year}, ${end_year}) AS y
+  CROSS JOIN generate_series(1, 4) AS q
+),
+missing AS (
+  SELECT year, quarter
+  FROM expected
+  WHERE to_regclass(format('${parent_prefix}_%s_q%s', year, quarter)) IS NULL
+),
+sample AS (
+  SELECT format('%sQ%s', year, quarter) AS part
+  FROM missing
+  ORDER BY year, quarter
+  LIMIT 8
+)
+SELECT
+  (SELECT count(*)::text FROM missing),
+  COALESCE((SELECT string_agg(part, ', ') FROM sample), '');
+")"
+
+  count="${out%%|*}"
+  sample="${out#*|}"
+
+  if [[ "${count}" == "0" ]]; then
+    ok "partition coverage complete: ${label} (${start_year}..${end_year})"
+  else
+    fail "missing ${count} partition(s) for ${label} (${start_year}..${end_year})"
+    if [[ -n "${sample}" ]]; then
+      warn "sample missing quarters for ${label}: ${sample}"
+    fi
+  fi
+}
+
+check_regclass "bb.drive_stats_raw"
+check_regclass "bb.ingest_log"
+check_regclass "bb.drive_day_load_log"
+check_regclass "public.drive"
+check_regclass "public.drive_day"
+check_regclass "public.drive_model"
+check_regclass "public.model_alias"
+check_regclass "public.provider"
+check_regclass "public.manufacturer"
+
+check_partitioned "bb" "drive_stats_raw"
+check_partitioned "public" "drive_day"
+
+check_regprocedure "bb.load_drive_day_backfill(integer,integer,boolean)"
+check_regprocedure "bb.load_drive_day_range(date,date)"
+check_regprocedure "bb.ensure_backblaze_models_for_range(date,date)"
+check_regprocedure "public.ensure_core_partitions(integer,integer)"
+
+if [[ "$(psql_q "SELECT EXISTS (SELECT 1 FROM public.provider WHERE name='backblaze');")" == "t" ]]; then
+  ok "seed row exists: public.provider(backblaze)"
+else
+  fail "missing seed row: public.provider(backblaze)"
+fi
+
+if [[ "$(psql_q "SELECT EXISTS (SELECT 1 FROM public.manufacturer WHERE manufacturer_id=1 AND name='Unknown');")" == "t" ]]; then
+  ok "seed row exists: public.manufacturer(Unknown)"
+else
+  fail "missing seed row: public.manufacturer(Unknown)"
+fi
+
+model_count="$(psql_q "SELECT count(*)::text FROM public.drive_model;")"
+alias_count="$(psql_q "SELECT count(*)::text FROM public.model_alias;")"
+if (( model_count > 0 )); then
+  ok "curated model rows present: ${model_count}"
+else
+  warn "no curated model rows found in public.drive_model"
+fi
+
+if (( alias_count > 0 )); then
+  ok "model alias rows present: ${alias_count}"
+else
+  warn "no alias rows found in public.model_alias"
+fi
+
+check_partition_coverage "bb.drive_stats_raw" "bb.drive_stats_raw"
+check_partition_coverage "public.drive_day" "public.drive_day"
+
+echo
+if (( errors > 0 )); then
+  echo "Preflight failed: ${errors} error(s), ${warnings} warning(s)."
+  exit 1
+fi
+
+echo "Preflight passed: 0 errors, ${warnings} warning(s)."

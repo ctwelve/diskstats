@@ -20,14 +20,14 @@ Examples:
 
 Notes:
   - Uses psql and runs with ON_ERROR_STOP=1.
-  - If PSQL_DSN is omitted, defaults to "postgresql:///postgres".
+  - Uses PSQL_DSN from env or .env unless a positional DSN is provided.
   - schema.sql creates diskstats and switches into it.
 USAGE
 }
 
 seed_models=1
 seed_model_alias=1
-dsn="postgresql:///postgres"
+dsn="${PSQL_DSN:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -50,8 +50,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "${dsn}" && -f "${ROOT_DIR}/.env" ]]; then
+  dsn="$(
+    awk '/^[[:space:]]*PSQL_DSN[[:space:]]*=/{
+      sub(/^[[:space:]]*PSQL_DSN[[:space:]]*=[[:space:]]*/, "", $0);
+      print; exit
+    }' "${ROOT_DIR}/.env"
+  )"
+  dsn="${dsn%\"}"
+  dsn="${dsn#\"}"
+  dsn="${dsn%\'}"
+  dsn="${dsn#\'}"
+fi
+
 if ! command -v psql >/dev/null 2>&1; then
   echo "ERROR: psql not found in PATH." >&2
+  exit 1
+fi
+
+if [[ -z "${dsn}" ]]; then
+  echo "ERROR: set PSQL_DSN in env or ${ROOT_DIR}/.env, or pass a DSN argument." >&2
   exit 1
 fi
 

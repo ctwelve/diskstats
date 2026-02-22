@@ -13,7 +13,7 @@
   - many raw forms can map to one curated model
   - mapping is auditable and easy to correct without rewriting raw data
 
-## Optional inference procedures
+## Optional utility procedures
 
 - `CALL bb.ensure_backblaze_models_for_range(<from>, <to>);`
   - Adds missing `drive_model` rows and exact aliases from raw rows in a date window using heuristic manufacturer/media inference.

@@ -7,14 +7,46 @@ ROOT="${PWD}"
 ZIPS="${ROOT}/zips"
 EXTRACTED="${ROOT}/extracted"
 LOGS="${ROOT}/logs"
+LOADER="${ROOT}/bin/bb_load.py"
+
+require_cmd() {
+  local cmd="$1"
+  if ! command -v "${cmd}" >/dev/null 2>&1; then
+    echo "ERROR: required command not found in PATH: ${cmd}" >&2
+    exit 1
+  fi
+}
 
 mkdir -p "$ZIPS" "$EXTRACTED" "$LOGS"
 
-: "${PSQL_DSN:?Set PSQL_DSN in environment, e.g. export PSQL_DSN='postgresql://.../diskstats'}"
+require_cmd wget
+require_cmd zip
+require_cmd unzip
+require_cmd flock
+
+if [[ ! -x "${LOADER}" ]]; then
+  echo "ERROR: loader not executable: ${LOADER}" >&2
+  exit 1
+fi
+
+if [[ -z "${PSQL_DSN:-}" && -f "${ROOT}/.env" ]]; then
+  PSQL_DSN="$(
+    awk '/^[[:space:]]*PSQL_DSN[[:space:]]*=/{
+      sub(/^[[:space:]]*PSQL_DSN[[:space:]]*=[[:space:]]*/, "", $0);
+      print; exit
+    }' "${ROOT}/.env"
+  )"
+  PSQL_DSN="${PSQL_DSN%\"}"
+  PSQL_DSN="${PSQL_DSN#\"}"
+  PSQL_DSN="${PSQL_DSN%\'}"
+  PSQL_DSN="${PSQL_DSN#\'}"
+fi
+
+: "${PSQL_DSN:?Set PSQL_DSN in env or ${ROOT}/.env (e.g. PSQL_DSN='postgresql://.../diskstats')}"
 
 # prevent concurrent runs (legacy + quarterly colliding, etc.)
-exec 9>"${ROOT}/state_legacy.lock"
-flock -n 9 || { echo "bb_dl_legacy: already running"; exit 0; }
+exec 9>"${ROOT}/state.lock"
+flock -n 9 || { echo "bb_dl_legacy: another downloader is already running"; exit 0; }
 
 # log everything
 LOGFILE="${LOGS}/legacy_pipeline_$(date -u +%Y%m%dT%H%M%SZ).log"
@@ -76,7 +108,7 @@ for ZIP_NAME in "${LEGACY_ZIPS[@]}"; do
 
   # ingest (bb_load is resumable per-file via ingest_log)
   echo "    ingesting -> Postgres"
-  bb_load.py "$PSQL_DSN" "$TARGET_DIR"
+  "${LOADER}" "$PSQL_DSN" "$TARGET_DIR"
 
   echo "    done"
 done

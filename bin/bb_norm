@@ -5,7 +5,7 @@ ROOT="${PWD}"
 LOGS="${ROOT}/logs"
 
 start_year=2013
-end_year=2025
+end_year="$(date -u +%Y)"
 continue_on_error="false"
 dsn="${PSQL_DSN:-}"
 
@@ -21,7 +21,7 @@ Examples:
 
 Notes:
   - Calls: CALL bb.load_drive_day_backfill(start_year, end_year, continue_on_error)
-  - Requires PSQL_DSN env var unless --dsn is provided.
+  - Uses PSQL_DSN from env or .env unless --dsn is provided.
 USAGE
 }
 
@@ -59,8 +59,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "${dsn}" && -f "${ROOT}/.env" ]]; then
+  dsn="$(
+    awk '/^[[:space:]]*PSQL_DSN[[:space:]]*=/{
+      sub(/^[[:space:]]*PSQL_DSN[[:space:]]*=[[:space:]]*/, "", $0);
+      print; exit
+    }' "${ROOT}/.env"
+  )"
+  dsn="${dsn%\"}"
+  dsn="${dsn#\"}"
+  dsn="${dsn%\'}"
+  dsn="${dsn#\'}"
+fi
+
 if [[ -z "${dsn}" ]]; then
-  echo "ERROR: set PSQL_DSN or pass --dsn." >&2
+  echo "ERROR: set PSQL_DSN (env or ${ROOT}/.env) or pass --dsn." >&2
+  exit 1
+fi
+
+if ! command -v psql >/dev/null 2>&1; then
+  echo "ERROR: psql not found in PATH." >&2
   exit 1
 fi
 
