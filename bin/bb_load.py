@@ -330,7 +330,9 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return h.hexdigest()
 
 def iter_csv_files(root: Path) -> Iterable[Path]:
-    for p in sorted(root.rglob("*.csv")):
+    for p in sorted(root.rglob("*")):
+        if p.suffix.lower() != ".csv":
+            continue
         if p.is_file():
             yield p
 

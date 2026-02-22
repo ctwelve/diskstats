@@ -120,8 +120,8 @@ for year in $(seq "$START_YEAR" "$END_YEAR"); do
       mkdir -p "$TMP_DIR"
       unzip -q "$ZIP_PATH" -d "$TMP_DIR"
 
-      # sanity check
-      if ! find "$TMP_DIR" -name '*.csv' | grep -q .; then
+      # sanity check (case-insensitive .csv)
+      if ! find "$TMP_DIR" -type f \( -iname '*.csv' \) | grep -q .; then
         echo "    ERROR: no CSVs found after unzip: $ZIP_PATH"
         rm -rf "$TMP_DIR"
         exit 1

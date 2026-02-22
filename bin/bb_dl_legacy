@@ -95,8 +95,8 @@ for ZIP_NAME in "${LEGACY_ZIPS[@]}"; do
     mkdir -p "$TMP_DIR"
     unzip -q "$ZIP_PATH" -d "$TMP_DIR"
 
-    # sanity check: ensure directory contains CSVs somewhere
-    if ! find "$TMP_DIR" -name '*.csv' | grep -q .; then
+    # sanity check: ensure directory contains CSVs somewhere (case-insensitive)
+    if ! find "$TMP_DIR" -type f \( -iname '*.csv' \) | grep -q .; then
       echo "    ERROR: no CSVs found after unzip: $ZIP_PATH"
       rm -rf "$TMP_DIR"
       exit 1
