@@ -1,6 +1,15 @@
 # diskstats
 Tooling to store and analyze disk reliability data, especially from BackBlaze
 
+**WARNING:** This project is very much in active development! I'm nowhere near declaring this as even beta-quality; this is alpha-quality software at *best.*
+
+I'm also not really much of a programmer; by trade I am a network engineer. If you see anything that's wildly out of spec, broken, etc., I'm happy to take feedback or PRs, but please keep in mind I don't do this sort of thing for a living! I am a rank amateur.
+
+That said, this shouln't be too hard for the tech-savvy to use, even in its raw form. Let me know if this helps!
+
+## Goals
+
+Eventually, this will likely include a suite of views and such to help you pick out the "best" drives from the available data. That being a highly opinionated and fraught topic, for now this should just be the tooling necessary to process the data in some reasonable form. We'll get to the opinionated analysis later.
 
 ## Requirements
 
