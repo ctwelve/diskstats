@@ -14,7 +14,7 @@ Examples:
 
 Notes:
   - This is a convenience wrapper around bin/db_setup.
-  - The reset behavior comes from sql/schema-cleaned.sql (DROP DATABASE IF EXISTS diskstats).
+  - The reset behavior comes from sql/schema.sql (DROP DATABASE IF EXISTS diskstats).
 USAGE
 }
 

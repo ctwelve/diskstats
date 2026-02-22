@@ -1,6 +1,6 @@
 # SQL Layout
 
-- `schema-cleaned.sql`: canonical schema/bootstrap script (creates DB, switches context, defines all objects).
+- `schema.sql`: canonical schema/bootstrap script (creates DB, switches context, defines all objects).
 - `seed-manufacturer.sql`: curated manufacturer rows.
 - `seed-drive-model-curated.sql`: curated `public.drive_model` seed data.
 - `seed-model-alias.sql`: deterministic exact Backblaze aliases (`raw model_name -> model_id`).

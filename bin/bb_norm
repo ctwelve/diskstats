@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${HOME}/Projects/backblaze"
+ROOT="${PWD}"
 LOGS="${ROOT}/logs"
 
 start_year=2013
 end_year=2025
 continue_on_error="false"
-dsn="${BB_DSN:-}"
+dsn="${PSQL_DSN:-}"
 
 usage() {
   cat <<'USAGE'
@@ -21,7 +21,7 @@ Examples:
 
 Notes:
   - Calls: CALL bb.load_drive_day_backfill(start_year, end_year, continue_on_error)
-  - Requires BB_DSN env var unless --dsn is provided.
+  - Requires PSQL_DSN env var unless --dsn is provided.
 USAGE
 }
 
@@ -60,7 +60,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "${dsn}" ]]; then
-  echo "ERROR: set BB_DSN or pass --dsn." >&2
+  echo "ERROR: set PSQL_DSN or pass --dsn." >&2
   exit 1
 fi
 

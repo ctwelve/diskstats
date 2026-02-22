@@ -5,14 +5,14 @@ BASE_URL="https://f001.backblazeb2.com/file/Backblaze-Hard-Drive-Data"
 START_YEAR=2016
 END_YEAR=2025
 
-ROOT="${HOME}/Projects/backblaze"
+ROOT="${PWD}"
 ZIPS="${ROOT}/zips"
 EXTRACTED="${ROOT}/extracted"
 LOGS="${ROOT}/logs"
 
 mkdir -p "$ZIPS" "$EXTRACTED" "$LOGS"
 
-: "${BB_DSN:?Set BB_DSN in environment, e.g. export BB_DSN='postgresql://.../diskstats'}"
+: "${PSQL_DSN:?Set PSQL_DSN in environment, e.g. export PSQL_DSN='postgresql://.../diskstats'}"
 
 # prevent accidental concurrent runs
 exec 9>"${ROOT}/state.lock"
@@ -71,7 +71,7 @@ for year in $(seq "$START_YEAR" "$END_YEAR"); do
 
     # ingest (bb_load is resumable; safe to re-run)
     echo "    ingesting -> Postgres"
-    bb_load.py "$BB_DSN" "$TARGET_DIR"
+    bb_load.py "$PSQL_DSN" "$TARGET_DIR"
 
     echo "    done"
   done

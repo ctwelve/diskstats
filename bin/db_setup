@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-SCHEMA_SQL="${ROOT_DIR}/sql/schema-cleaned.sql"
+SCHEMA_SQL="${ROOT_DIR}/sql/schema.sql"
 MANUFACTURER_SEED_SQL="${ROOT_DIR}/sql/seed-manufacturer.sql"
 MODEL_CURATED_SEED_SQL="${ROOT_DIR}/sql/seed-drive-model-curated.sql"
 MODEL_ALIAS_SEED_SQL="${ROOT_DIR}/sql/seed-model-alias.sql"
@@ -21,7 +21,7 @@ Examples:
 Notes:
   - Uses psql and runs with ON_ERROR_STOP=1.
   - If PSQL_DSN is omitted, defaults to "postgresql:///postgres".
-  - schema-cleaned.sql creates diskstats and switches into it.
+  - schema.sql creates diskstats and switches into it.
 USAGE
 }
 

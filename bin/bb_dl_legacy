@@ -3,15 +3,14 @@ set -euo pipefail
 
 BASE_URL="https://f001.backblazeb2.com/file/Backblaze-Hard-Drive-Data"
 
-# Where everything lives (NFS mount in your Fedora VM)
-ROOT="${HOME}/Projects/backblaze"
+ROOT="${PWD}"
 ZIPS="${ROOT}/zips"
 EXTRACTED="${ROOT}/extracted"
 LOGS="${ROOT}/logs"
 
 mkdir -p "$ZIPS" "$EXTRACTED" "$LOGS"
 
-: "${BB_DSN:?Set BB_DSN in environment, e.g. export BB_DSN='postgresql://.../diskstats'}"
+: "${PSQL_DSN:?Set PSQL_DSN in environment, e.g. export PSQL_DSN='postgresql://.../diskstats'}"
 
 # prevent concurrent runs (legacy + quarterly colliding, etc.)
 exec 9>"${ROOT}/state_legacy.lock"
@@ -77,7 +76,7 @@ for ZIP_NAME in "${LEGACY_ZIPS[@]}"; do
 
   # ingest (bb_load is resumable per-file via ingest_log)
   echo "    ingesting -> Postgres"
-  bb_load.py "$BB_DSN" "$TARGET_DIR"
+  bb_load.py "$PSQL_DSN" "$TARGET_DIR"
 
   echo "    done"
 done
