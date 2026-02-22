@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="${PWD}"
 start_year=2013
-end_year="$(( $(date -u +%Y) + 1 ))"
+end_year="$(date -u +%Y)"
 dsn="${PSQL_DSN:-}"
 allow_non_diskstats=0
 
@@ -29,6 +29,7 @@ Examples:
 Notes:
   - Uses PSQL_DSN from env or .env unless --dsn is provided.
   - Expects current database to be diskstats by default.
+  - Default partition check range is 2013..current UTC year.
 USAGE
 }
 
