@@ -339,8 +339,7 @@ BEGIN
     FROM (
       SELECT ma.model_id, 1 AS priority
       FROM public.model_alias ma
-      WHERE ma.provider_id = p.provider_id
-        AND ma.raw_model_name = r.model
+      WHERE ma.raw_model_name = r.model
         AND ma.is_active
 
       UNION ALL
@@ -366,17 +365,7 @@ END $$;
 CREATE PROCEDURE bb.ensure_backblaze_models_for_range(IN p_from date, IN p_to date)
     LANGUAGE plpgsql
     AS $$
-DECLARE
-  v_provider_id smallint;
 BEGIN
-  SELECT provider_id INTO v_provider_id
-  FROM public.provider
-  WHERE name = 'backblaze';
-
-  IF v_provider_id IS NULL THEN
-    RAISE EXCEPTION 'Provider backblaze not found in public.provider';
-  END IF;
-
   WITH raw_models AS (
     SELECT
       btrim(r.model) AS raw_model_name,
@@ -405,9 +394,8 @@ BEGIN
   LEFT JOIN public.drive_model dm ON dm.model_name = rm.raw_model_name
   WHERE dm.model_id IS NULL;
 
-  INSERT INTO public.model_alias (provider_id, raw_model_name, model_id, match_method, notes)
+  INSERT INTO public.model_alias (raw_model_name, model_id, match_method, notes)
   SELECT
-    v_provider_id,
     rm.raw_model_name,
     dm.model_id,
     'auto_raw',
@@ -421,27 +409,16 @@ BEGIN
       AND btrim(r.model) <> ''
   ) rm
   JOIN public.drive_model dm ON dm.model_name = rm.raw_model_name
-  ON CONFLICT (provider_id, raw_model_name) DO NOTHING;
+  ON CONFLICT (raw_model_name) DO NOTHING;
 END $$;
 
 
 CREATE PROCEDURE bb.infer_backblaze_model_aliases(IN p_match_method text DEFAULT 'auto_norm', IN p_notes text DEFAULT 'Inferred by normalized raw model token')
     LANGUAGE plpgsql
     AS $$
-DECLARE
-  v_provider_id smallint;
 BEGIN
-  SELECT provider_id INTO v_provider_id
-  FROM public.provider
-  WHERE name = 'backblaze';
-
-  IF v_provider_id IS NULL THEN
-    RAISE EXCEPTION 'Provider backblaze not found in public.provider';
-  END IF;
-
-  INSERT INTO public.model_alias (provider_id, raw_model_name, model_id, match_method, notes)
+  INSERT INTO public.model_alias (raw_model_name, model_id, match_method, notes)
   SELECT
-    v_provider_id,
     r.model,
     dm.model_id,
     p_match_method,
@@ -455,10 +432,77 @@ BEGIN
   JOIN public.drive_model dm
     ON public.normalize_identifier_text(r.model) = public.normalize_identifier_text(dm.normalized_name)
   LEFT JOIN public.model_alias ma
-    ON ma.provider_id = v_provider_id
-   AND ma.raw_model_name = r.model
+    ON ma.raw_model_name = r.model
   WHERE ma.alias_id IS NULL
-  ON CONFLICT (provider_id, raw_model_name) DO NOTHING;
+  ON CONFLICT (raw_model_name) DO NOTHING;
+END $$;
+
+CREATE PROCEDURE public.ensure_quarterly_partitions(IN p_parent regclass, IN p_child_schema name, IN p_child_name_prefix text, IN p_start_year integer, IN p_end_year integer)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  y integer;
+  q integer;
+  v_from date;
+  v_to date;
+  v_part_name text;
+BEGIN
+  IF p_start_year > p_end_year THEN
+    RAISE EXCEPTION 'Start year (%) must be <= end year (%)', p_start_year, p_end_year;
+  END IF;
+
+  FOR y IN p_start_year..p_end_year LOOP
+    FOR q IN 1..4 LOOP
+      v_from := make_date(y, (q * 3) - 2, 1);
+      v_to := (v_from + interval '3 months')::date;
+      v_part_name := format('%s_%s_q%s', p_child_name_prefix, y, q);
+
+      EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS %I.%I PARTITION OF %s FOR VALUES FROM (%L) TO (%L);',
+        p_child_schema,
+        v_part_name,
+        p_parent,
+        v_from,
+        v_to
+      );
+    END LOOP;
+  END LOOP;
+END $$;
+
+CREATE PROCEDURE bb.ensure_drive_stats_raw_partitions(IN p_start_year integer, IN p_end_year integer)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_parent regclass;
+BEGIN
+  v_parent := to_regclass('bb.drive_stats_raw');
+  IF v_parent IS NULL THEN
+    RAISE EXCEPTION 'Partition parent bb.drive_stats_raw does not exist';
+  END IF;
+
+  CALL public.ensure_quarterly_partitions(v_parent, 'bb', 'drive_stats_raw', p_start_year, p_end_year);
+END $$;
+
+CREATE PROCEDURE public.ensure_drive_day_partitions(IN p_start_year integer, IN p_end_year integer)
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_parent regclass;
+BEGIN
+  v_parent := to_regclass('public.drive_day');
+  IF v_parent IS NULL THEN
+    RAISE EXCEPTION 'Partition parent public.drive_day does not exist';
+  END IF;
+
+  CALL public.ensure_quarterly_partitions(v_parent, 'public', 'drive_day', p_start_year, p_end_year);
+END $$;
+
+CREATE PROCEDURE public.ensure_core_partitions(IN p_start_year integer, IN p_end_year integer)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  CALL bb.ensure_drive_stats_raw_partitions(p_start_year, p_end_year);
+  CALL public.ensure_drive_day_partitions(p_start_year, p_end_year);
 END $$;
 
 --
@@ -899,7 +943,6 @@ ALTER SEQUENCE public.drive_model_model_id_seq OWNED BY public.drive_model.model
 
 CREATE TABLE public.model_alias (
     alias_id bigint NOT NULL,
-    provider_id smallint NOT NULL,
     raw_model_name text NOT NULL,
     normalized_name text GENERATED ALWAYS AS (public.normalize_identifier_text(raw_model_name)) STORED,
     model_id bigint NOT NULL,
@@ -1029,6 +1072,9 @@ ALTER TABLE public.provider ALTER COLUMN provider_id SET DEFAULT nextval('public
 INSERT INTO public.manufacturer (manufacturer_id, name) VALUES (1, 'Unknown');
 INSERT INTO public.provider (provider_id, name) VALUES (1, 'backblaze');
 
+-- Pre-create expected quarterly partitions for bootstrap and predictable ingest behavior.
+CALL public.ensure_core_partitions(2013, 2026);
+
 SELECT pg_catalog.setval('public.drive_drive_id_seq', COALESCE((SELECT max(drive_id) FROM public.drive), 1), EXISTS (SELECT 1 FROM public.drive));
 SELECT pg_catalog.setval('public.drive_model_model_id_seq', COALESCE((SELECT max(model_id) FROM public.drive_model), 1), EXISTS (SELECT 1 FROM public.drive_model));
 SELECT pg_catalog.setval('public.model_alias_alias_id_seq', COALESCE((SELECT max(alias_id) FROM public.model_alias), 1), EXISTS (SELECT 1 FROM public.model_alias));
@@ -1056,7 +1102,7 @@ ALTER TABLE public.drive_model
 ALTER TABLE public.model_alias
     ADD CONSTRAINT model_alias_pkey PRIMARY KEY (alias_id);
 ALTER TABLE public.model_alias
-    ADD CONSTRAINT model_alias_provider_id_raw_model_name_key UNIQUE (provider_id, raw_model_name);
+    ADD CONSTRAINT model_alias_raw_model_name_key UNIQUE (raw_model_name);
 
 ALTER TABLE public.drive
     ADD CONSTRAINT drive_pkey PRIMARY KEY (drive_id);
@@ -1099,7 +1145,7 @@ CREATE INDEX drive_model_normalized_name_idx ON public.drive_model USING btree (
 CREATE INDEX drive_model_media_type_idx ON public.drive_model USING btree (media_type);
 
 CREATE INDEX model_alias_model_id_idx ON public.model_alias USING btree (model_id);
-CREATE INDEX model_alias_normalized_name_idx ON public.model_alias USING btree (provider_id, normalized_name) WHERE (is_active IS TRUE);
+CREATE INDEX model_alias_normalized_name_idx ON public.model_alias USING btree (normalized_name) WHERE (is_active IS TRUE);
 
 CREATE INDEX model_lifetime_stats_drives_seen_idx ON public.model_lifetime_stats USING btree (drives_seen);
 CREATE INDEX model_lifetime_stats_failures_per_drive_year_idx ON public.model_lifetime_stats USING btree (failures_per_drive_year);
@@ -1123,8 +1169,6 @@ ALTER TABLE public.drive_model
 
 ALTER TABLE public.model_alias
     ADD CONSTRAINT model_alias_model_id_fkey FOREIGN KEY (model_id) REFERENCES public.drive_model(model_id);
-ALTER TABLE public.model_alias
-    ADD CONSTRAINT model_alias_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.provider(provider_id);
 
 ALTER TABLE public.drive
     ADD CONSTRAINT drive_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.provider(provider_id);
@@ -1150,6 +1194,14 @@ COMMENT ON PROCEDURE bb.ensure_backblaze_models_for_range(date, date) IS
   'Infers missing canonical models and exact aliases from raw Backblaze model strings for a date window.';
 COMMENT ON PROCEDURE bb.infer_backblaze_model_aliases(text, text) IS
   'Optional heuristic inference: builds missing alias mappings by comparing normalized raw model strings to curated normalized_name.';
+COMMENT ON PROCEDURE public.ensure_quarterly_partitions(regclass, name, text, integer, integer) IS
+  'Generic quarterly partition creator for date-range partitioned parent tables.';
+COMMENT ON PROCEDURE bb.ensure_drive_stats_raw_partitions(integer, integer) IS
+  'Creates quarterly partitions for bb.drive_stats_raw over a year range.';
+COMMENT ON PROCEDURE public.ensure_drive_day_partitions(integer, integer) IS
+  'Creates quarterly partitions for public.drive_day over a year range.';
+COMMENT ON PROCEDURE public.ensure_core_partitions(integer, integer) IS
+  'Creates quarterly partitions for both bb.drive_stats_raw and public.drive_day over a year range.';
 COMMENT ON FUNCTION bb.infer_manufacturer_id_from_model_name(text) IS
   'Heuristic manufacturer classifier for a raw model string. Returns public.manufacturer.manufacturer_id.';
 COMMENT ON FUNCTION bb.infer_media_type_from_model_name(text) IS
@@ -1176,7 +1228,7 @@ COMMENT ON TABLE public.manufacturer IS
 COMMENT ON TABLE public.drive_model IS
   'Canonical drive model catalog (provider-agnostic where possible).';
 COMMENT ON TABLE public.model_alias IS
-  'Provider-scoped mapping from raw imported model strings to canonical drive_model rows.';
+  'Global mapping from raw imported model strings to canonical drive_model rows; allows many raw variants to map to one curated model_id.';
 COMMENT ON TABLE public.drive IS
   'Physical/logical drive identity scoped by provider + model + serial.';
 COMMENT ON TABLE public.drive_day IS

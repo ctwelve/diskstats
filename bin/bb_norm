@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${HOME}/Projects/backblaze"
+LOGS="${ROOT}/logs"
+
+start_year=2013
+end_year=2025
+continue_on_error="false"
+dsn="${BB_DSN:-}"
+
+usage() {
+  cat <<'USAGE'
+Usage: bb_norm [--start-year N] [--end-year N] [--continue-on-error] [--dsn DSN]
+
+Examples:
+  bb_norm
+  bb_norm --start-year 2016 --end-year 2025
+  bb_norm --continue-on-error
+  bb_norm --dsn "postgresql://user:pass@localhost:5432/diskstats"
+
+Notes:
+  - Calls: CALL bb.load_drive_day_backfill(start_year, end_year, continue_on_error)
+  - Requires BB_DSN env var unless --dsn is provided.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --start-year)
+      start_year="${2:?missing value for --start-year}"
+      shift 2
+      ;;
+    --end-year)
+      end_year="${2:?missing value for --end-year}"
+      shift 2
+      ;;
+    --continue-on-error)
+      continue_on_error="true"
+      shift
+      ;;
+    --no-continue-on-error)
+      continue_on_error="false"
+      shift
+      ;;
+    --dsn)
+      dsn="${2:?missing value for --dsn}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "${dsn}" ]]; then
+  echo "ERROR: set BB_DSN or pass --dsn." >&2
+  exit 1
+fi
+
+if ! [[ "${start_year}" =~ ^[0-9]{4}$ && "${end_year}" =~ ^[0-9]{4}$ ]]; then
+  echo "ERROR: start/end year must be 4-digit integers." >&2
+  exit 1
+fi
+
+if (( start_year > end_year )); then
+  echo "ERROR: --start-year cannot be greater than --end-year." >&2
+  exit 1
+fi
+
+mkdir -p "${LOGS}"
+
+exec 9>"${ROOT}/state_norm.lock"
+flock -n 9 || { echo "bb_norm: already running"; exit 0; }
+
+logfile="${LOGS}/norm_$(date -u +%Y%m%dT%H%M%SZ).log"
+exec > >(tee -a "${logfile}") 2>&1
+
+echo "==> Backblaze normalization starting at $(date -u)"
+echo "==> Years ${start_year}..${end_year}"
+echo "==> continue_on_error=${continue_on_error}"
+echo "==> Log: ${logfile}"
+
+psql "${dsn}" -v ON_ERROR_STOP=1 -c "CALL bb.load_drive_day_backfill(${start_year}, ${end_year}, ${continue_on_error});"
+
+echo
+echo "==> Backblaze normalization finished at $(date -u)"

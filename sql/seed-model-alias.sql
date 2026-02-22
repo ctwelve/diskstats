@@ -1,13 +1,11 @@
 -- Deterministic model alias seeding from canonical curated model names.
 \connect diskstats
 
-INSERT INTO public.model_alias (provider_id, raw_model_name, model_id, match_method, notes)
-SELECT p.provider_id, dm.model_name, dm.model_id, 'seed_exact', 'Exact raw model_name -> curated drive_model mapping'
-FROM public.provider p
-CROSS JOIN public.drive_model dm
-WHERE p.name = 'backblaze'
+INSERT INTO public.model_alias (raw_model_name, model_id, match_method, notes)
+SELECT dm.model_name, dm.model_id, 'seed_exact', 'Exact raw model_name -> curated drive_model mapping'
+FROM public.drive_model dm
 ORDER BY dm.model_id
-ON CONFLICT (provider_id, raw_model_name) DO UPDATE
+ON CONFLICT (raw_model_name) DO UPDATE
 SET
   model_id = EXCLUDED.model_id,
   match_method = EXCLUDED.match_method,
