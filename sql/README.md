@@ -15,8 +15,12 @@
 
 ## Optional utility procedures
 
-- `CALL bb.ensure_backblaze_models_for_range(<from>, <to>);`
+- `CALL bb.ensure_backblaze_drive_models_for_range(<from>, <to>);`
   - Adds missing `drive_model` rows and exact aliases from raw rows in a date window using heuristic manufacturer/media inference.
+- `CALL bb.ensure_backblaze_models_for_range(<from>, <to>);`
+  - Compatibility alias for `bb.ensure_backblaze_drive_models_for_range(...)`.
+- `CALL bb.ensure_backblaze_drives_for_range(<from>, <to>);`
+  - Adds/updates `public.drive` rows (provider + model + serial identity, first/last seen) from raw ingest in a date window.
 - `CALL public.ensure_core_partitions(<start_year>, <end_year>);`
   - Creates quarterly partitions for both partitioned fact tables (`bb.drive_stats_raw`, `public.drive_day`).
 

@@ -273,8 +273,9 @@ BEGIN
   SET LOCAL synchronous_commit = off;
   SET LOCAL work_mem = '256MB';
 
-  -- Ensure new raw model strings are materialized/mapped before fact insert.
-  CALL bb.ensure_backblaze_models_for_range(p_from, p_to);
+  -- Ensure canonical dimensions exist before fact insert.
+  CALL bb.ensure_backblaze_drive_models_for_range(p_from, p_to);
+  CALL bb.ensure_backblaze_drives_for_range(p_from, p_to);
 
   WITH p AS (
     SELECT provider_id FROM public.provider WHERE name='backblaze'
@@ -339,14 +340,14 @@ BEGIN
     FROM (
       SELECT ma.model_id, 1 AS priority
       FROM public.model_alias ma
-      WHERE ma.raw_model_name = r.model
+      WHERE ma.raw_model_name = btrim(r.model)
         AND ma.is_active
 
       UNION ALL
 
       SELECT m2.model_id, 2 AS priority
       FROM public.drive_model m2
-      WHERE m2.model_name = r.model
+      WHERE m2.model_name = btrim(r.model)
     ) AS candidate
     ORDER BY candidate.priority, candidate.model_id
     LIMIT 1
@@ -354,7 +355,7 @@ BEGIN
   JOIN public.drive d
     ON d.provider_id = p.provider_id
    AND d.model_id = model_resolve.model_id
-   AND d.serial_number = r.serial_number
+   AND d.serial_number = btrim(r.serial_number)
   WHERE r.date >= p_from
     AND r.date <  p_to
   ON CONFLICT (provider_id, drive_id, date) DO NOTHING;
@@ -362,7 +363,7 @@ BEGIN
   GET DIAGNOSTICS rows_inserted = ROW_COUNT;
 END $$;
 
-CREATE PROCEDURE bb.ensure_backblaze_models_for_range(IN p_from date, IN p_to date)
+CREATE PROCEDURE bb.ensure_backblaze_drive_models_for_range(IN p_from date, IN p_to date)
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -410,6 +411,81 @@ BEGIN
   ) rm
   JOIN public.drive_model dm ON dm.model_name = rm.raw_model_name
   ON CONFLICT (raw_model_name) DO NOTHING;
+END $$;
+
+CREATE PROCEDURE bb.ensure_backblaze_models_for_range(IN p_from date, IN p_to date)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  CALL bb.ensure_backblaze_drive_models_for_range(p_from, p_to);
+END $$;
+
+CREATE PROCEDURE bb.ensure_backblaze_drives_for_range(IN p_from date, IN p_to date)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  WITH p AS (
+    SELECT provider_id
+    FROM public.provider
+    WHERE name = 'backblaze'
+  ),
+  raw_drives AS (
+    SELECT
+      p.provider_id,
+      btrim(r.serial_number) AS serial_number,
+      btrim(r.model) AS raw_model_name,
+      min(r.date) AS first_seen,
+      max(r.date) AS last_seen
+    FROM bb.drive_stats_raw r
+    JOIN p ON true
+    WHERE r.date >= p_from
+      AND r.date < p_to
+      AND r.serial_number IS NOT NULL
+      AND btrim(r.serial_number) <> ''
+      AND r.model IS NOT NULL
+      AND btrim(r.model) <> ''
+    GROUP BY p.provider_id, btrim(r.serial_number), btrim(r.model)
+  )
+  INSERT INTO public.drive (
+    provider_id,
+    model_id,
+    serial_number,
+    first_seen,
+    last_seen
+  )
+  SELECT
+    rd.provider_id,
+    model_resolve.model_id,
+    rd.serial_number,
+    rd.first_seen,
+    rd.last_seen
+  FROM raw_drives rd
+  JOIN LATERAL (
+    SELECT candidate.model_id
+    FROM (
+      SELECT ma.model_id, 1 AS priority
+      FROM public.model_alias ma
+      WHERE ma.raw_model_name = rd.raw_model_name
+        AND ma.is_active
+      UNION ALL
+      SELECT dm.model_id, 2 AS priority
+      FROM public.drive_model dm
+      WHERE dm.model_name = rd.raw_model_name
+    ) candidate
+    ORDER BY candidate.priority, candidate.model_id
+    LIMIT 1
+  ) model_resolve ON true
+  ON CONFLICT (provider_id, model_id, serial_number) DO UPDATE
+    SET first_seen = CASE
+          WHEN public.drive.first_seen IS NULL THEN EXCLUDED.first_seen
+          WHEN EXCLUDED.first_seen IS NULL THEN public.drive.first_seen
+          ELSE LEAST(public.drive.first_seen, EXCLUDED.first_seen)
+        END,
+        last_seen = CASE
+          WHEN public.drive.last_seen IS NULL THEN EXCLUDED.last_seen
+          WHEN EXCLUDED.last_seen IS NULL THEN public.drive.last_seen
+          ELSE GREATEST(public.drive.last_seen, EXCLUDED.last_seen)
+        END;
 END $$;
 
 
@@ -1163,9 +1239,13 @@ COMMENT ON PROCEDURE bb.load_drive_day_backfill(integer, integer, boolean) IS
 COMMENT ON PROCEDURE bb.load_drive_day_quarter(date, date) IS
   'Wrapper that runs one quarter load and reports success/error without aborting caller control flow.';
 COMMENT ON PROCEDURE bb.load_drive_day_range(date, date) IS
-  'Loads one date range from raw rows into public.drive_day; first infers missing models/aliases, then inserts normalized fact rows.';
-COMMENT ON PROCEDURE bb.ensure_backblaze_models_for_range(date, date) IS
+  'Loads one date range from raw rows into public.drive_day; first ensures drive_model/model_alias and drive dimensions, then inserts normalized facts.';
+COMMENT ON PROCEDURE bb.ensure_backblaze_drive_models_for_range(date, date) IS
   'Infers missing canonical models and exact aliases from raw Backblaze model strings for a date window.';
+COMMENT ON PROCEDURE bb.ensure_backblaze_models_for_range(date, date) IS
+  'Compatibility wrapper that delegates to bb.ensure_backblaze_drive_models_for_range.';
+COMMENT ON PROCEDURE bb.ensure_backblaze_drives_for_range(date, date) IS
+  'Infers missing provider/model/serial drive identities for a date window and updates first_seen/last_seen.';
 COMMENT ON PROCEDURE public.ensure_quarterly_partitions(regclass, name, text, integer, integer) IS
   'Generic quarterly partition creator for date-range partitioned parent tables.';
 COMMENT ON PROCEDURE bb.ensure_drive_stats_raw_partitions(integer, integer) IS
