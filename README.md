@@ -73,6 +73,7 @@ Downloads Backblaze quarterly ZIPs through the most recently published quarter (
 
 4. `bin/bb_norm`
 Runs normalization procedures that populate `public.drive_day` (and related canonical model mappings), making the dataset ready for querying and analysis.
+During long runs, it now emits progress notices at quarter boundaries (start/skip/done/error, rows inserted, elapsed time, cumulative quarter progress) and monthly chunk heartbeats within each quarter.
 
 
 ## Database setup
