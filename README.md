@@ -67,4 +67,3 @@ bin/db_reset
 - `/Users/ctwelve/Developer/diskstats/sql/seed-manufacturer.sql`: curated manufacturer reference rows.
 - `/Users/ctwelve/Developer/diskstats/sql/seed-drive-model-curated.sql`: curated `public.drive_model` fact rows.
 - `/Users/ctwelve/Developer/diskstats/sql/seed-model-alias.sql`: deterministic exact aliases (`raw model_name -> model_id`).
-- `/Users/ctwelve/Developer/diskstats/sql/drive_model_curated.sql`: pg_dump-style source artifact used to produce curated seed data.

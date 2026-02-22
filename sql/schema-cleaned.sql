@@ -7,7 +7,7 @@
 --   3) Seed minimal reference data required by loaders and normalization procedures.
 --
 -- Notes:
---   - This file is the readable counterpart to schema-master.sql (raw pg_dump output).
+--   - This is the canonical hand-maintained schema/bootstrap file.
 --   - Run with psql as a superuser or a role that can CREATE DATABASE.
 --   - Expected loader flow:
 --       bin/bb_dl (or bin/bb_dl_legacy) -> bin/bb_load.py -> bb.load_drive_day_backfill(...)
@@ -412,30 +412,6 @@ BEGIN
   ON CONFLICT (raw_model_name) DO NOTHING;
 END $$;
 
-
-CREATE PROCEDURE bb.infer_backblaze_model_aliases(IN p_match_method text DEFAULT 'auto_norm', IN p_notes text DEFAULT 'Inferred by normalized raw model token')
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  INSERT INTO public.model_alias (raw_model_name, model_id, match_method, notes)
-  SELECT
-    r.model,
-    dm.model_id,
-    p_match_method,
-    p_notes
-  FROM (
-    SELECT DISTINCT btrim(model) AS model
-    FROM bb.drive_stats_raw
-    WHERE model IS NOT NULL
-      AND btrim(model) <> ''
-  ) r
-  JOIN public.drive_model dm
-    ON public.normalize_identifier_text(r.model) = public.normalize_identifier_text(dm.normalized_name)
-  LEFT JOIN public.model_alias ma
-    ON ma.raw_model_name = r.model
-  WHERE ma.alias_id IS NULL
-  ON CONFLICT (raw_model_name) DO NOTHING;
-END $$;
 
 CREATE PROCEDURE public.ensure_quarterly_partitions(IN p_parent regclass, IN p_child_schema name, IN p_child_name_prefix text, IN p_start_year integer, IN p_end_year integer)
     LANGUAGE plpgsql
@@ -944,7 +920,6 @@ ALTER SEQUENCE public.drive_model_model_id_seq OWNED BY public.drive_model.model
 CREATE TABLE public.model_alias (
     alias_id bigint NOT NULL,
     raw_model_name text NOT NULL,
-    normalized_name text GENERATED ALWAYS AS (public.normalize_identifier_text(raw_model_name)) STORED,
     model_id bigint NOT NULL,
     match_method text DEFAULT 'manual'::text NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
@@ -1145,7 +1120,6 @@ CREATE INDEX drive_model_normalized_name_idx ON public.drive_model USING btree (
 CREATE INDEX drive_model_media_type_idx ON public.drive_model USING btree (media_type);
 
 CREATE INDEX model_alias_model_id_idx ON public.model_alias USING btree (model_id);
-CREATE INDEX model_alias_normalized_name_idx ON public.model_alias USING btree (normalized_name) WHERE (is_active IS TRUE);
 
 CREATE INDEX model_lifetime_stats_drives_seen_idx ON public.model_lifetime_stats USING btree (drives_seen);
 CREATE INDEX model_lifetime_stats_failures_per_drive_year_idx ON public.model_lifetime_stats USING btree (failures_per_drive_year);
@@ -1192,8 +1166,6 @@ COMMENT ON PROCEDURE bb.load_drive_day_range(date, date) IS
   'Loads one date range from raw rows into public.drive_day; first infers missing models/aliases, then inserts normalized fact rows.';
 COMMENT ON PROCEDURE bb.ensure_backblaze_models_for_range(date, date) IS
   'Infers missing canonical models and exact aliases from raw Backblaze model strings for a date window.';
-COMMENT ON PROCEDURE bb.infer_backblaze_model_aliases(text, text) IS
-  'Optional heuristic inference: builds missing alias mappings by comparing normalized raw model strings to curated normalized_name.';
 COMMENT ON PROCEDURE public.ensure_quarterly_partitions(regclass, name, text, integer, integer) IS
   'Generic quarterly partition creator for date-range partitioned parent tables.';
 COMMENT ON PROCEDURE bb.ensure_drive_stats_raw_partitions(integer, integer) IS
@@ -1252,8 +1224,6 @@ COMMENT ON COLUMN public.drive_model.rpm IS
   'Optional nominal spindle speed for HDD models.';
 COMMENT ON COLUMN public.model_alias.raw_model_name IS
   'As-imported model string from provider data.';
-COMMENT ON COLUMN public.model_alias.normalized_name IS
-  'Generated normalization key for raw_model_name.';
 COMMENT ON COLUMN public.model_alias.match_method IS
   'How the alias was established (manual, seed_exact, rule, etc.).';
 COMMENT ON COLUMN public.manufacturer.normalized_name IS

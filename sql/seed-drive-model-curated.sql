@@ -1,4 +1,4 @@
--- Curated drive model seed data (source: drive_model_curated.sql).
+-- Curated drive model seed data.
 \connect diskstats
 
 INSERT INTO public.drive_model (model_id, manufacturer_id, model_name, normalized_name, nominal_capacity_bytes, media_type, interface_type, form_factor, rpm) VALUES

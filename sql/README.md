@@ -1,10 +1,8 @@
 # SQL Layout
 
 - `schema-cleaned.sql`: canonical schema/bootstrap script (creates DB, switches context, defines all objects).
-- `schema-master.sql`: raw `pg_dump` artifact.
-- `drive_model_curated.sql`: source dump of the hand-curated `public.drive_model` table.
 - `seed-manufacturer.sql`: curated manufacturer rows.
-- `seed-drive-model-curated.sql`: curated `public.drive_model` seed data derived from `drive_model_curated.sql`.
+- `seed-drive-model-curated.sql`: curated `public.drive_model` seed data.
 - `seed-model-alias.sql`: deterministic exact Backblaze aliases (`raw model_name -> model_id`).
 
 ## Why `model_alias` Exists
@@ -19,8 +17,6 @@
 
 - `CALL bb.ensure_backblaze_models_for_range(<from>, <to>);`
   - Adds missing `drive_model` rows and exact aliases from raw rows in a date window using heuristic manufacturer/media inference.
-- `CALL bb.infer_backblaze_model_aliases();`
-  - Adds missing aliases by normalized-string matching against curated `drive_model.normalized_name`.
 - `CALL public.ensure_core_partitions(<start_year>, <end_year>);`
   - Creates quarterly partitions for both partitioned fact tables (`bb.drive_stats_raw`, `public.drive_day`).
 
