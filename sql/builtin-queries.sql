@@ -3,6 +3,7 @@
 -- This script extends the existing public analytics surface with heavyweight,
 -- precomputed query objects to match dataset scale.
 
+\connect diskstats
 SET search_path = public, bb;
 
 -- Keep names harmonized with existing materialized analytics objects in schema.sql.
