@@ -60,4 +60,4 @@ This separation keeps raw fidelity while allowing stable analytics schemas.
 
 - `builtin-queries.sql`: curated analytics materialized views and refresh helper (`public.refresh_analytics_materialized_views()`) for the public-schema query collection
 
-Installed automatically by `bin/db_setup` after schema + seed scripts.
+Installed by `bin/db_setup` after schema + seed scripts (skip with `--no-builtin-queries`).

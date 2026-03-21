@@ -11,13 +11,14 @@ BUILTIN_QUERIES_SQL="${ROOT_DIR}/sql/builtin-queries.sql"
 
 usage() {
   cat <<'USAGE'
-Usage: db_setup [--no-model-seed] [--no-model-alias] [PSQL_DSN]
+Usage: db_setup [--no-model-seed] [--no-model-alias] [--no-builtin-queries] [PSQL_DSN]
 
 Examples:
   db_setup
   db_setup "postgresql://localhost/postgres"
   db_setup --no-model-seed "postgresql://user:pass@localhost:5432/postgres"
   db_setup --no-model-seed --no-model-alias
+  db_setup --no-builtin-queries
 
 Notes:
   - Uses psql and runs with ON_ERROR_STOP=1.
@@ -28,6 +29,7 @@ USAGE
 
 seed_models=1
 seed_model_alias=1
+install_builtin_queries=1
 dsn="${PSQL_DSN:-}"
 
 while [[ $# -gt 0 ]]; do
@@ -38,6 +40,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-model-alias)
       seed_model_alias=0
+      shift
+      ;;
+    --no-builtin-queries)
+      install_builtin_queries=0
       shift
       ;;
     -h|--help)
@@ -96,7 +102,11 @@ else
   echo "==> Skipping model alias seed (--no-model-alias)"
 fi
 
-echo "==> Installing built-in query views: ${BUILTIN_QUERIES_SQL}"
-psql "${dsn}" -v ON_ERROR_STOP=1 -f "${BUILTIN_QUERIES_SQL}"
+if [[ "${install_builtin_queries}" -eq 1 ]]; then
+  echo "==> Installing built-in analytics materialized views: ${BUILTIN_QUERIES_SQL}"
+  psql "${dsn}" -v ON_ERROR_STOP=1 -f "${BUILTIN_QUERIES_SQL}"
+else
+  echo "==> Skipping built-in analytics materialized views (--no-builtin-queries)"
+fi
 
 echo "==> Database setup complete."

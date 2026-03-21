@@ -73,7 +73,7 @@ bin/bb_norm
 
 ## Built-in queries
 
-`diskstats` ships with a harmonized collection of analytics **materialized views** in `sql/builtin-queries.sql`, installed by `bin/db_setup`.
+`diskstats` ships with a harmonized collection of analytics **materialized views** in `sql/builtin-queries.sql`, installed by `bin/db_setup` (unless `--no-builtin-queries` is passed).
 
 Added built-ins:
 
@@ -112,6 +112,7 @@ Useful flags:
 
 - `--no-model-seed`
 - `--no-model-alias`
+- `--no-builtin-queries`
 
 ### `bin/db_preflight`
 
