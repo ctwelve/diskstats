@@ -7,6 +7,7 @@
 - `seed-drive-model-curated.sql`: curated canonical models for `public.drive_model`
 - `seed-model-alias.sql`: exact deterministic alias mapping (`raw model_name -> model_id`)
 - `patch-normalization-procs.sql`: focused patch script for normalization procedures during iterative development/fixes
+- `builtin-queries.sql`: built-in analytics materialized views for common high-volume workflows
 
 ## Object layering
 
@@ -54,3 +55,9 @@ This separation keeps raw fidelity while allowing stable analytics schemas.
 - Keep schema comments current when adding/modifying SQL objects; comments are part of the operational docs.
 - Prefer additive migration/patch scripts (like `patch-normalization-procs.sql`) while iterating, then fold into `schema.sql` when stabilizing.
 - If a procedure performs transaction control (`COMMIT`/`ROLLBACK`), document expected invocation semantics in both SQL comments and script-level docs.
+
+## Built-in analytics materialized views
+
+- `builtin-queries.sql`: curated analytics materialized views and refresh helper (`public.refresh_analytics_materialized_views()`) for the public-schema query collection
+
+Installed automatically by `bin/db_setup` after schema + seed scripts.

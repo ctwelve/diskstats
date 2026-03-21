@@ -71,6 +71,37 @@ bin/bb_dl
 bin/bb_norm
 ```
 
+## Built-in queries
+
+`diskstats` ships with a harmonized collection of analytics **materialized views** in `sql/builtin-queries.sql`, installed by `bin/db_setup`.
+
+Added built-ins:
+
+- `public.model_fleet_latest_stats`: most recent-day fleet size/failure snapshot by model
+- `public.model_reliability_90d`: trailing 90-day model reliability summary
+- `public.model_smart_signals_30d`: trailing 30-day SMART signal prevalence and failure co-occurrence
+- `public.model_lifetime_leaderboard`: lifetime model leaderboard (min 10,000 drive-days)
+
+Related existing analytics materialized views already in schema:
+
+- `public.drive_day_growth`
+- `public.drive_lifecycle`
+- `public.model_hazard_5k`
+- `public.model_lifetime_stats`
+- `public.model_quarter_stats`
+
+Refresh the full analytics collection after large ingest/normalization runs:
+
+```bash
+psql "$PSQL_DSN" -c "CALL public.refresh_analytics_materialized_views();"
+```
+
+Example usage:
+
+```bash
+psql "$PSQL_DSN" -c "SELECT * FROM public.model_reliability_90d ORDER BY annualized_failures_per_drive_year DESC LIMIT 20;"
+```
+
 ## Script reference
 
 ### `bin/db_setup`
