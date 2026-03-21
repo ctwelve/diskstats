@@ -1,53 +1,55 @@
 # diskstats
-Tooling to store and analyze disk reliability data, especially from BackBlaze
+Tooling to store and analyze disk reliability data, especially from Backblaze.
 
-**WARNING:** This project is very much in active development! I'm nowhere near declaring this as even beta-quality; this is alpha-quality software at *best.*
+**WARNING:** This project is in active development and still alpha-quality.
 
-I'm also not really much of a programmer; by trade I am a network engineer. If you see anything that's wildly out of spec, broken, etc., I'm happy to take feedback or PRs, but please keep in mind I don't do this sort of thing for a living! I am a rank amateur.
+## Project intent
 
-That said, this shouln't be too hard for the tech-savvy to use, even in its raw form. Let me know if this helps!
+`diskstats` ingests large SMART datasets (currently Backblaze), normalizes them into query-friendly relational tables, and provides a foundation for reliability analysis.
 
-## Goals
+Today the repository focuses on:
 
-Eventually, this will likely include a suite of views and such to help you pick out the "best" drives from the available data. That being a highly opinionated and fraught topic, for now this should just be the tooling necessary to process the data in some reasonable form. We'll get to the opinionated analysis later.
+- repeatable ingest and normalization pipelines
+- stable table design for daily drive telemetry
+- canonical model/manufacturer mapping to tame source data noise
+- operational tooling for long-running jobs
+
+## Architecture (high-level)
+
+Pipeline shape:
+
+1. Download/extract quarterly archives (`bin/bb_dl`, optionally `bin/bb_dl_legacy`)
+2. Raw ingest into `bb.drive_stats_raw` (`bin/bb_load.py`)
+3. Normalize into canonical tables (`bin/bb_norm` → `bb.load_drive_day_backfill`)
+4. Query/analysis against normalized facts (`public.drive_day`) and dimensions (`public.drive`, `public.drive_model`, etc.)
+
+Data domains:
+
+- `bb.*`: source-specific raw/staging objects (Backblaze)
+- `public.*`: provider-agnostic canonical dimensions/facts
 
 ## Requirements
 
 - PostgreSQL with `psql` available in `PATH`
 - Python 3 with `psycopg2` installed (required by `bin/bb_load.py`)
-- `wget`, `zip`, `unzip`, and `flock` available in `PATH`
+- `wget`, `zip`, `unzip`, and `flock` in `PATH`
 - A host/environment that can run long jobs reliably (for example, utility VM + `screen`/`tmux`)
 - Enough CPU and memory bandwidth for long normalization runs (multi-core server recommended)
 - Sufficient local storage: plan for at least 500 GB free for full download/extract/load + database growth
-- A `PSQL_DSN` value available via environment variable or `.env` file in project root
+- A `PSQL_DSN` value via environment variable or `.env` in project root
 
+## Run location and generated state
 
-## Long-running scripts
+Run commands from the repository root (`diskstats/`) **inside a persistent shell session** (for example `tmux`/`screen`). Both download/ingest and normalization are long-running jobs on full datasets. Scripts create/use these directories and files:
 
-The `bb_*` scripts can run for a long time. Run them from a stable session/environment (for example, `screen` or `tmux` on a utility VM) so interruptions in your local terminal do not kill active ingest/normalization jobs.
-`bin/bb_dl` and `bin/bb_dl_legacy` also share a lock file and should be run one at a time.
+- `downloads/`: downloaded archives
+- `expanded/`: extracted CSV payloads
+- `logs/`: job logs (`dl_*.log`, `norm_*.log`, etc.)
+- `state_*.lock`: lock files used to prevent overlapping runs
 
-Observed runtime guidance:
+## Quickstart
 
-- Full raw ingest can take many hours (around 8 hours in one observed environment).
-- Normalization (`bin/bb_norm`) can run for multiple days.
-- In practice, normalization tends to be CPU and memory-bandwidth bound more than raw disk throughput.
-
-
-## Run location
-
-Run commands from your intended project root. For most users:
-
-1. Navigate to an appropriate location via the command prompt
-2. `git clone` this repository, then `cd diskstats`
-3. go through the quickstart, below.
-
-The toolchain will create folders to hold the downloaded archives, their expanded contents, logging, etc. Be warned, this is a big pile of data; the downloads alone will need ~250 GB, most likely.
-
-
-## Quickstart flow
-
-Set `PSQL_DSN` to the `diskstats` database for ingest/normalization:
+Set `PSQL_DSN` to the target `diskstats` DB for ingest/normalization:
 
 ```bash
 export PSQL_DSN="postgresql://user:pass@localhost:5432/diskstats"
@@ -64,72 +66,76 @@ Then run:
 ```bash
 bin/db_setup "postgresql://user:pass@localhost:5432/postgres"
 bin/db_preflight
-bin/bb_dl_legacy ## Optional, if you care about data from 2013-2016
+bin/bb_dl_legacy # Optional if you want pre-2016 data
 bin/bb_dl
 bin/bb_norm
 ```
 
-What this does:
+## Script reference
 
-1. `bin/db_setup`
-Creates/rebuilds the `diskstats` database schema, seed data, and quarterly partitions. This step should use an admin-capable DSN (commonly `.../postgres`) because it performs `DROP DATABASE` and `CREATE DATABASE`.
+### `bin/db_setup`
 
-2. `bin/db_preflight`
-Runs readiness checks before long-running jobs: tooling, connectivity, schema objects, and partition coverage.
+Creates/rebuilds schema, seed data, and quarterly partitions. Use an admin-capable DSN (commonly `.../postgres`) because this can `DROP DATABASE` and `CREATE DATABASE`.
 
-3. `bin/bb_dl_legacy` and `bin/bb_dl`
-Downloads Backblaze quarterly ZIPs through the most recently published quarter (typically one quarter behind the calendar quarter) and ingests raw CSV data into `bb.drive_stats_raw`. Use `bin/bb_dl_legacy` to ingest legacy pre-2016 Backblaze archives.
+Useful flags:
 
-4. `bin/bb_norm`
-Runs normalization procedures that populate `public.drive_day` (and related canonical model mappings), making the dataset ready for querying and analysis.
-During long runs, it now emits progress notices at quarter boundaries (start/skip/done/error, rows inserted, elapsed time, cumulative quarter progress) and monthly chunk heartbeats within each quarter.
+- `--no-model-seed`
+- `--no-model-alias`
 
+### `bin/db_preflight`
 
-## Database setup
+Checks local tooling, DB connectivity, expected schema objects, and partition coverage before long jobs.
 
-Bootstrap schema (and optional model seeds):
+### `bin/bb_dl_legacy` and `bin/bb_dl`
 
-```bash
-bin/db_setup
-```
+Download and ingest Backblaze quarterly datasets into `bb.drive_stats_raw`. Run from a persistent shell (`tmux`/`screen`) for full loads.
 
-By default this bootstrap also pre-creates quarterly partitions (2013..2026) for:
+- `bb_dl_legacy`: older dataset ranges
+- `bb_dl`: current quarterly dataset pages/archives
 
-- `bb.drive_stats_raw`
-- `public.drive_day`
+Both scripts are lock-protected and should not run in parallel with each other.
 
-Skip optional model seed data:
+### `bin/bb_norm`
 
-```bash
-bin/db_setup --no-model-seed
-```
+Calls `bb.load_drive_day_backfill(start_year, end_year, continue_on_error)` to normalize from raw ingest into `public.drive_day` and related canonical dimensions.
 
-Skip optional exact model alias seed data:
+- Emits quarter-level progress notices (start/skip/done/error, rows, elapsed)
+- Emits monthly chunk heartbeats within each quarter
+- Intended for very long runs; use `tmux`/`screen`
 
-```bash
-bin/db_setup --no-model-alias
-```
+## Operational guidance
 
-Use a specific DSN for `psql` directly (overrides env/.env):
+Observed runtime guidance:
 
-```bash
-bin/db_setup "postgresql://user:pass@localhost:5432/postgres"
-```
+- Full raw ingest can take many hours (around 8 hours in one observed environment) and may process hundreds of millions of rows
+- Full normalization can run for multiple days
+- Normalization is typically CPU + memory-bandwidth bound
 
-Run the preflight check before `bb_dl`/`bb_norm`:
+Recommended process:
 
-```bash
-bin/db_preflight
-```
+1. Run `bin/db_preflight`
+2. Start downloads/ingest in a persistent session (`tmux`/`screen`)
+3. Start normalization in a persistent session (`tmux`/`screen`)
+4. Monitor `logs/` and keep lock files intact
 
-Reset/rebuild quickly (wraps `db_setup`):
+## Troubleshooting
 
-```bash
-bin/db_reset
-```
+### `ERROR: invalid transaction termination` during `bb_norm`
+
+`bb.load_drive_day_backfill` performs internal `COMMIT`s. Ensure the procedure is called as a top-level statement from `psql` (not inside an explicit `BEGIN ... COMMIT` block, and not wrapped in a way that forces transaction-block semantics).
+
+### Preflight fails on partition coverage
+
+Run `db_setup` (or `public.ensure_core_partitions(start_year, end_year)`) to create missing quarterly partitions.
+
+### Missing `PSQL_DSN`
+
+Export `PSQL_DSN` or add it to `.env` in project root.
 
 ## SQL seed structure
 
-- `seed-manufacturer.sql`: curated manufacturer reference rows.
-- `seed-drive-model-curated.sql`: curated `public.drive_model` fact rows.
-- `seed-model-alias.sql`: deterministic exact aliases (`raw model_name -> model_id`).
+- `seed-manufacturer.sql`: curated manufacturer reference rows
+- `seed-drive-model-curated.sql`: curated `public.drive_model` rows
+- `seed-model-alias.sql`: deterministic exact aliases (`raw model_name -> model_id`)
+
+For SQL object layout and procedure inventory, see `sql/README.md`.
