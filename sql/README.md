@@ -1,31 +1,56 @@
-# SQL Layout
+# SQL layout and conventions
 
-- `schema.sql`: canonical schema/bootstrap script (creates DB, switches context, defines all objects).
-- `seed-manufacturer.sql`: curated manufacturer rows.
-- `seed-drive-model-curated.sql`: curated `public.drive_model` seed data.
-- `seed-model-alias.sql`: deterministic exact Backblaze aliases (`raw model_name -> model_id`).
+## File map
 
-## Why `model_alias` Exists
+- `schema.sql`: canonical bootstrap script for the database (schemas, tables, indexes, procedures, comments, partitions)
+- `seed-manufacturer.sql`: curated manufacturer rows for `public.manufacturer`
+- `seed-drive-model-curated.sql`: curated canonical models for `public.drive_model`
+- `seed-model-alias.sql`: exact deterministic alias mapping (`raw model_name -> model_id`)
+- `patch-normalization-procs.sql`: focused patch script for normalization procedures during iterative development/fixes
 
-- `drive_model` is the canonical model catalog (one row per curated model).
-- `model_alias` maps raw strings to canonical `drive_model.model_id`.
-- This separates source variability from canonical facts:
-  - many raw forms can map to one curated model
-  - mapping is auditable and easy to correct without rewriting raw data
+## Object layering
 
-## Optional utility procedures
+- `bb.*` objects are source-specific ingest/staging for Backblaze
+- `public.*` objects are canonical/provider-agnostic dimensions and facts
+
+This separation keeps raw fidelity while allowing stable analytics schemas.
+
+## Core normalization flow
+
+1. Raw records land in `bb.drive_stats_raw`
+2. Model aliases/dimensions are ensured (`bb.ensure_backblaze_drive_models_for_range`)
+3. Drive identities are ensured (`bb.ensure_backblaze_drives_for_range`)
+4. Daily facts are inserted into `public.drive_day` (`bb.load_drive_day_range`)
+5. Quarter orchestration, logging, and resume semantics are handled by `bb.load_drive_day_backfill`
+
+## Why `model_alias` exists
+
+- `drive_model` stores canonical model facts (one row per curated model)
+- `model_alias` absorbs raw string variation from source data
+- many-to-one mapping enables:
+  - auditability
+  - easier corrections
+  - no rewrite of raw history when aliases improve
+
+## Utility procedures
 
 - `CALL bb.ensure_backblaze_drive_models_for_range(<from>, <to>);`
-  - Adds missing `drive_model` rows and exact aliases from raw rows in a date window using heuristic manufacturer/media inference.
+  - adds missing canonical models and aliases inferred from raw rows
 - `CALL bb.ensure_backblaze_models_for_range(<from>, <to>);`
-  - Compatibility alias for `bb.ensure_backblaze_drive_models_for_range(...)`.
+  - compatibility alias of the above
 - `CALL bb.ensure_backblaze_drives_for_range(<from>, <to>);`
-  - Adds/updates `public.drive` rows (provider + model + serial identity, first/last seen) from raw ingest in a date window.
+  - upserts canonical drive identities (provider/model/serial + first/last seen)
 - `CALL public.ensure_core_partitions(<start_year>, <end_year>);`
-  - Creates quarterly partitions for both partitioned fact tables (`bb.drive_stats_raw`, `public.drive_day`).
+  - creates quarterly partitions for `bb.drive_stats_raw` and `public.drive_day`
 
-## Preferred seed order
+## Seed order (preferred)
 
 1. `seed-manufacturer.sql`
 2. `seed-drive-model-curated.sql`
 3. `seed-model-alias.sql`
+
+## Notes for contributors
+
+- Keep schema comments current when adding/modifying SQL objects; comments are part of the operational docs.
+- Prefer additive migration/patch scripts (like `patch-normalization-procs.sql`) while iterating, then fold into `schema.sql` when stabilizing.
+- If a procedure performs transaction control (`COMMIT`/`ROLLBACK`), document expected invocation semantics in both SQL comments and script-level docs.

@@ -105,7 +105,9 @@ echo "==> Years ${start_year}..${end_year}"
 echo "==> continue_on_error=${continue_on_error}"
 echo "==> Log: ${logfile}"
 
-psql "${dsn}" -v ON_ERROR_STOP=1 -c "SET client_min_messages=NOTICE; CALL bb.load_drive_day_backfill(${start_year}, ${end_year}, ${continue_on_error});"
+psql "${dsn}" -v ON_ERROR_STOP=1 \
+  -c "SET client_min_messages=NOTICE" \
+  -c "CALL bb.load_drive_day_backfill(${start_year}, ${end_year}, ${continue_on_error})"
 
 echo
 echo "==> Backblaze normalization finished at $(date -u)"
