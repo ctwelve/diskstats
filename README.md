@@ -124,6 +124,7 @@ Download and ingest Backblaze quarterly datasets into `bb.drive_stats_raw`. Run 
 
 - `bb_dl_legacy`: older dataset ranges
 - `bb_dl`: current quarterly dataset pages/archives
+- `bb_dl --dry-run`: print the supported archive URLs without downloading or ingesting
 
 Both scripts are lock-protected and should not run in parallel with each other.
 
